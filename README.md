@@ -12,16 +12,16 @@
 |------|------|------|
 | 桌宠动画 | PNG 序列帧、ABC 三段式动作、待机/点击/拖拽等 | 可用 |
 | 气泡与说话 | 聊天气泡窗口、说话队列与优先级 | 可用 |
-| 语音输入 | 全局热键录音转写，提交到 Agent | 可用 |
-| 屏幕感知 | 定时截图 → 编码 → Agent 上下文 | 可用 |
+| 语音输入 | 全局热键录音，SenseVoice 中英日韩粤混合转写，提交到 Agent | 可用 |
+| 屏幕感知 | 定时截图 → 本地差分门控 → 后台编码 → Agent 上下文 | 可用 |
 | 视觉 LLM | 截图理解，生成画面摘要 | 可用 |
 | 主动话题 | `proactive.topic` 根据视觉摘要和策略决定是否发话 | 可用，含冷却与摘要去重 |
-| 长期记忆 | 对话记忆自动沉淀与检索、记忆管理对话框、导入/导出 | 可用 |
+| 长期记忆 | 对话记忆自动沉淀与检索（关键词/本地向量/级联召回）、巩固、维护、管理对话框、导入/导出 | 可用 |
 | 文本 LLM | 用户回复 / 主动话语生成 | 可用（需配置） |
 | 情感改写 | 对话上下文下的情感标签与改写 | 部分可用 |
-| TTS | GPT-SoVITS HTTP 合成与播放 | 可用（需本地服务） |
+| TTS | Kokoro HTTP 合成与播放（CPU 可跑、秒级启动） | 可用（需本地 runtime） |
 
-尚未完善：情绪驱动动画、生产级打扰控制、真实服务端端到端测试。
+尚未完善：情绪驱动动画、生产级打扰控制（用户忙碌/播放中/专注模式）。
 
 ---
 
@@ -71,7 +71,7 @@ vision.input → vision.llm → proactive.topic → llm.chat → emotion.rewrite
 ## 目录结构
 
 ```text
-Pet Agent/
+Pet Agent slimVersion/
 ├── Animation/                 # 桌宠动画资源
 ├── include/vpet/              # 公共头文件
 │   ├── agent/                 # DAG 运行时、节点、上下文 key
@@ -82,13 +82,25 @@ Pet Agent/
 │   └── speech/                # 语音输入
 ├── src/                       # 实现与 MainWindow
 │   ├── memory/                # 记忆服务实现（图、仓库、巩固、维护）
-│   └── agent/                 # DAG 运行时与节点实现
-├── GPT-SoVITS/                # 本地 TTS 服务（可选）
+│   ├── agent/                 # DAG 运行时与节点实现
+│   └── web/                   # 联网搜索客户端与研究引擎
+├── tools/
+│   ├── kokoro/                # Kokoro TTS HTTP 服务脚本（端口 9880）
+│   └── asr/                   # SenseVoice 转写脚本与模型下载工具
+├── runtime/                   # Python venv（Kokoro + sherpa-onnx + torch CPU，生成物）
+├── models/                    # 本地模型（sensevoice / embedding / HF 缓存，生成物）
+├── vendor/open-webSearch/     # 本地联网搜索 daemon（固定版本 v2.1.11）
 ├── docs/                      # 设计与集成文档
+├── scripts/                   # 测试与部署脚本（Run-Tests、搜索 daemon、模型下载）
+├── packaging/                 # 发行打包脚本与 Inno Setup 配置
+├── tests/                     # CTest 测试目标
+├── setup_slim_runtime.bat     # 一键创建 runtime venv
+├── start_tts_server.bat       # 手动启动 Kokoro TTS 服务
 ├── agent_dag_structure.json   # Agent DAG 配置
 ├── llm_config.example.json    # 文本 LLM 配置模板
 ├── vision_llm_config.example.json
 ├── memory_config.example.json # 长期记忆配置模板
+├── web_search_config.example.json
 ├── tts_config.json            # TTS 服务配置
 └── CMakeLists.txt
 ```
@@ -100,8 +112,10 @@ Pet Agent/
 - Windows 10/11
 - C++17 编译器（建议 MinGW 或 MSVC，与 Qt 套件一致）
 - CMake ≥ 3.16
-- Qt 6（`Core` / `Gui` / `Widgets` / `Network` / `Multimedia`）
-- 可选：Python 环境 + GPT-SoVITS（TTS）
+- Qt 6（`Core` / `Gui` / `Widgets` / `Network` / `Multimedia` / `Concurrent`）
+- 可选：本地 `runtime/` Python venv（Kokoro TTS + SenseVoice ASR，见 [BUILD_PLAN.md](BUILD_PLAN.md)）
+- 可选：本地模型（`models/sensevoice/`、`models/embedding/`）
+- 可选：Node.js 环境 + `vendor/open-webSearch`（联网研究 daemon）
 - 可选：OpenAI 兼容的文本/视觉 LLM API
 
 ---
@@ -266,7 +280,7 @@ copy vision_llm_config.example.json vision_llm_config.json
 |---|---|---|---|
 | `user.input` | 用户输入触发源 | `user.input` | 设置 `trigger: "user"`；通常作为文本链路源节点 |
 | `vision.input` | 视觉输入触发源 | 最新截图、帧尺寸、帧 ID | 设置 `trigger: "vision"`；写入 `semantic.image.*` 和 `semantic.vision.*` |
-| `vision.llm` | 调用视觉 LLM 生成屏幕摘要 | `semantic.image.base64`、媒体类型和尺寸 | 输出 `semantic.vision.summary`；可配置 `prompt` |
+| `vision.llm` | 调用视觉 LLM 生成屏幕摘要 | `semantic.image.base64`、媒体类型和尺寸 | 输出 `semantic.vision.summary`；可配置 `prompt`、`detail`（low/high/auto，非法值报错）与 `max_tokens`（正整数校验） |
 | `proactive.topic` | 判断是否允许主动发话并组装提示词 | `semantic.vision.summary` | 输出 `semantic.proactive.*`、`semantic.text.prompt`；可配置 `enabled`、`instruction`、`min_interval_ms`、`dedup_window_ms` |
 | `web.research` | 受预算限制的联网研究 | `semantic.text.prompt` | 输出 invocation-local 的 `semantic.web.research.*` 并重组 `semantic.text.prompt`；默认 `mode=auto`（按检索决策规则判断，`/search` 等显式触发词始终强制检索），失败策略为 `continue` |
 | `memory.retrieve` | 检索相关记忆并注入提示词 | `semantic.text.prompt` | 输出 `semantic.memory.retrieval`；异步非阻塞（结果下一轮可用），embedding 未启用时退化为关键词检索 |
@@ -315,7 +329,13 @@ conversation.history      对话历史
 
 ### 4. TTS
 
-编辑 `tts_config.json`（服务地址、参考音频、语种等）。启动时会尝试拉起本地 GPT-SoVITS；失败时桌宠仍可运行，说话可能退化为仅文字气泡。
+编辑 `tts_config.json`（`server_*` 服务地址、`voice` 音色、`speed` 语速、`lang` 语种）。启动时会尝试拉起本地 Kokoro TTS 服务（`tools/kokoro/kokoro_server.py`，监听 `127.0.0.1:9880`）；Python 环境缺失或服务失败时桌宠仍可运行，说话退化为仅文字气泡。
+
+首次使用需准备语音环境：
+
+1. 运行 `setup_slim_runtime.bat` 创建 `runtime/` venv（安装 Kokoro、sherpa-onnx、torch CPU 版等）
+2. Kokoro 模型（约 330 MB）首次合成时自动下载；建议设置 `HF_HOME=<项目根>\models\hf` 缓存以便离线
+3. 可先手动运行 `start_tts_server.bat` 验证服务，或直接由应用自动拉起
 
 ### 5. 长期记忆
 
@@ -358,8 +378,8 @@ copy memory_config.example.json memory_config.json
 
 | 提示词 | 位置 |
 |---|---|
-| 情感改写提示词 | `src/agent/emotion_rewrite_node.cpp` 的 `BuildPrompt`（约 218-232 行） |
-| 主动话题包装模板（"当前画面摘要…只输出最终要说的话"） | `src/agent/proactive_topic_node.cpp` 的 `BuildPrompt`（约 187-193 行） |
+| 情感改写提示词 | `src/agent/emotion_rewrite_node.cpp` 的 `BuildPrompt`（约 215-232 行） |
+| 主动话题包装模板（"当前画面摘要…只输出最终要说的话"） | `src/agent/proactive_topic_node.cpp` 的 `BuildPrompt`（约 176-193 行） |
 | 联网研究结果组装 / 失败降级提示词 | `src/agent/web_research_node.cpp` 的 `WriteResearchPrompt` |
 | 视觉 LLM 的 system 消息（MiMo 档位） | `src/llm/vision_llm_client.cpp`（约 253-257 行） |
 
@@ -383,19 +403,24 @@ copy memory_config.example.json memory_config.json
 | `vision_llm_config.json` | 视觉 LLM（截图理解） | 屏幕感知需要 |
 | `web_search_config.json` | 联网研究（配合本地 daemon） | 联网研究需要 |
 | `memory_config.json` | 长期记忆（含维护/embedding 配置） | 可选，缺失时记忆节点空转 |
-| `tts_config.json` + GPT-SoVITS 环境 | 语音播报 | 可选，缺失时退化为文字气泡 |
+| `runtime/` + `tts_config.json` | 语音播报（Kokoro TTS） | 可选，缺失时退化为文字气泡 |
+| `runtime/` + `models/sensevoice/` | 语音输入（SenseVoice 转写） | 可选，缺失时语音输入报错 |
 | `context.md` | 桌宠人设（系统提示词） | 可选 |
+
+首次部署语音环境：先运行 `setup_slim_runtime.bat` 创建 `runtime/` venv，再运行
+`tools/asr/download_sensevoice.py` 下载 ASR 模型到 `models/sensevoice/`（约 228 MB）。
 
 可选能力：
 
-- **联网研究**：先启动本地 `open-webSearch` daemon（默认 `127.0.0.1:3210`，详见 `vendor/open-webSearch/README.md`），再将 `web_search_config.example.json` 复制为 `web_search_config.json`。daemon 未启动时 Agent 会自动降级为普通对话。
-- **TTS 播报**：应用启动时自动尝试拉起本地 GPT-SoVITS 服务（`127.0.0.1:9880`）并健康检查；也可先手动运行 `start_tts_server.bat`。
+- **联网研究**：先启动本地 `open-webSearch` daemon（默认 `127.0.0.1:3210`，默认引擎 Bing，详见 `docs/open-websearch-local-deployment.md` 与 `scripts/open-websearch/`），再将 `web_search_config.example.json` 复制为 `web_search_config.json`。daemon 未启动时 Agent 会自动降级为普通对话。
+- **TTS 播报**：应用启动时自动尝试拉起本地 Kokoro TTS 服务（`127.0.0.1:9880`）并健康检查；也可先手动运行 `start_tts_server.bat`。Kokoro 模型首次使用时自动下载，建议设 `HF_HOME=<项目根>\models\hf` 以便离线。
+- **语音输入（ASR）**：依赖 `runtime/` venv 与 `models/sensevoice/` 模型；模型缺失时转写失败并提示运行 `tools/asr/download_sensevoice.py`。
 
 ### 2. 启动
 
 构建（见[构建](#构建)）后运行 `VPet`：
 
-1. 出现启动画面，等待 Agent/TTS 初始化（TTS 健康检查最多约 36 秒，失败或超时会自动跳过）
+1. 出现启动画面，等待 Agent/TTS 初始化（TTS 健康检查最多约 60 秒，失败或超时会自动跳过）
 2. 桌宠出现在屏幕上，待机动画随机走动或发呆
 
 ### 3. 基础交互
@@ -422,22 +447,24 @@ copy memory_config.example.json memory_config.json
 ### 4. 语音输入
 
 1. 按 `Ctrl+Alt+V`（或右键菜单"语音输入"）开始录音，再次按下结束
-2. 录音自动经 GPT-SoVITS 环境中的 ASR 脚本转写为文字（需要本地 `GPT-SoVITS/` 目录）
+2. 录音自动经 SenseVoice（sherpa-onnx 本地离线转写，中/英/日/韩/粤句内混合识别）转写为文字（需要 `runtime/` venv 与 `models/sensevoice/` 模型）
 3. 转写结果作为用户输入提交给 Agent DAG，回复通过气泡/TTS 输出
 
 ### 5. 屏幕感知与主动发话
 
 1. 右键菜单勾选 **屏幕感知（截图）** 开启（隐私 opt-in，默认关闭；截图仅存内存，不落盘）
-2. 约每 3 秒截取一屏，经 `vision.llm` 生成画面摘要
-3. 摘要进入 `proactive.topic` 节点，满足以下条件才主动说话：
+2. 约每 3 秒截取一屏，先在本地做差分检测（320x180 灰度缩略图，变化像素 ≥ 3% 才视为显著变化），静止画面直接丢弃，不上云
+3. 距上次派发 ≥ `minDispatchIntervalMs`（默认 60 秒）的显著变化帧，才在后台线程降采样编码（JPEG 1280px、质量 70）并经 `vision.llm` 生成画面摘要
+4. 摘要进入 `proactive.topic` 节点，满足以下条件才主动说话：
    - 距上次主动发话超过 `min_interval_ms`（默认 30 秒）
    - 画面摘要与过去 `dedup_window_ms`（默认 5 分钟）内的摘要指纹不同
-4. 满足时以桌宠口吻说一句话，来源标记为 `vision_proactive`
+5. 满足时以桌宠口吻说一句话，来源标记为 `vision_proactive`
 
 ### 6. 联网研究
 
 - 在对话中提及需要实时信息的提问，或直接以 `/search` 开头，会触发 `web.research` 节点联网检索
-- 默认最多 3 轮检索、每轮 2 个 query、总预算 15 秒；结果附来源
+- 默认最多 3 轮检索、每轮 2 个 query、总预算 15 秒（17 秒 watchdog）；结果附来源，证据不足时明确保留不确定性
+- 本地 daemon 默认引擎为 Bing（`request` 模式），由 `scripts/open-websearch/Start-OpenWebSearch.ps1` 启动（仅回环监听、关闭 CORS，详见 `docs/open-websearch-local-deployment.md`）
 - daemon 不可用或检索失败时按 `failure_policy=continue` 降级为普通对话（回答中会说明未联网）
 
 ### 7. 长期记忆
@@ -464,11 +491,12 @@ copy memory_config.example.json memory_config.json
 | 主动说话的频率/内容 | `agent_dag_structure.json` 的 `proactive_topic` 节点（`enabled` / `min_interval_ms` / `dedup_window_ms` / `instruction`） |
 | 视觉识别描述方式 | 同一文件 `vision_llm` 节点的 `config.prompt` |
 | 对话温度/长度 | 同一文件 `call_llm` 节点（`temperature` / `max_tokens` 等） |
-| 联网检索强度 | 同一文件 `web_research` 节点（轮数/query 数/预算） |
+| 联网检索强度 | 同一文件 `web_research` 节点（轮数/query 数/预算/引擎） |
 | 记忆检索量/注入预算 | `memory_config.json`（`max_results` / `prompt_budget_chars`） |
-| 本地向量检索开关 | `memory_config.json` → `embedding.enabled`（需 `models/embedding/` 模型） |
+| 本地向量检索开关 | `memory_config.json` → `embedding.enabled`（模型用 `scripts/download_bge_model.ps1` 下载到 `models/embedding/`） |
 | 文本/视觉模型与 API Key | `llm_config.json` / `vision_llm_config.json` |
-| TTS 音色与参考音频 | `tts_config.json` |
+| TTS 音色 / 语速 / 语种 | `tts_config.json`（`voice` / `speed` / `lang`） |
+| 语音输入 ASR 模型 | `tools/asr/download_sensevoice.py`（下载到 `models/sensevoice/`） |
 
 所有 JSON 修改重启程序生效。另见[提示词修改指南](#6-提示词修改指南)。
 
@@ -504,9 +532,11 @@ copy memory_config.example.json memory_config.json
 
 ## 当前限制
 
-- 长期记忆的向量检索默认关闭（`embedding.enabled=false`，需本地 ONNX 模型 `BAAI/bge-small-zh-v1.5`），未配置时检索退化为关键词匹配
-- 主动策略目前提供固定冷却和摘要指纹去重，尚未接入用户忙碌、语音播放和专注模式
-- 视觉帧按编码内容 hash 去重，但尚未实现感知级相似度检测
+- 语音链路为轻量版：TTS 使用 Kokoro（音色固定、不可克隆用户音色），ASR 使用 SenseVoiceSmall（中英日韩粤混合）；与全量版 GPT-SoVITS 的替换细节见 [BUILD_PLAN.md](BUILD_PLAN.md)
+- 长期记忆的向量检索默认关闭（`embedding.enabled=false`），模型用 `scripts/download_bge_model.ps1` 下载（约 94 MB ONNX）后开启；未配置时检索退化为关键词匹配
+- 主动策略目前提供固定冷却、摘要指纹去重与感知级差分门控，尚未接入用户忙碌、语音播放和专注模式
+- 视觉派发的差分阈值（3%、灰度差 24）与 60 秒派发预算为固定值，暂无可视化设置界面
+- 会话历史暂未做窗口裁剪或摘要压缩，随使用线性增长
 - 情感标签尚未驱动桌宠动画状态
 - 文本 LLM 使用本地 `llm_config.json`；示例模板为 `llm_config.example.json`，真实配置不会提交到 Git
 - `FRAMEWORK.md` 中的完整 `IModule`/`Agent` 模块中心仍在演进，当前主路径是 `MainWindow` + `AgentRuntime`
@@ -517,6 +547,7 @@ copy memory_config.example.json memory_config.json
 
 | 文档 | 内容 |
 |------|------|
+| [BUILD_PLAN.md](BUILD_PLAN.md) | 轻量版构建计划（Kokoro / SenseVoice 替换全量版语音链路） |
 | [AGENT_CONTEXT_KEY_PROTOCOL.md](AGENT_CONTEXT_KEY_PROTOCOL.md) | Agent 上下文 key 协议 |
 | [FRAMEWORK.md](FRAMEWORK.md) | 视觉感知框架设计 |
 | [DEVELOPMENT_LOG.md](DEVELOPMENT_LOG.md) | 开发日志 |
@@ -533,4 +564,4 @@ copy memory_config.example.json memory_config.json
 
 ## 许可证
 
-以仓库内实际声明为准。第三方组件（如 GPT-SoVITS、Qt）遵循各自许可证。
+以仓库内实际声明为准。第三方组件（如 Kokoro、SenseVoice / sherpa-onnx、open-webSearch、Qt）遵循各自许可证。
