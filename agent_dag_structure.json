@@ -1,0 +1,93 @@
+{
+  "nodes": [
+    {
+      "id": "user_input",
+      "type": "user.input",
+      "config": {
+        "trigger": "user"
+      }
+    },
+    {
+      "id": "web_research",
+      "type": "web.research",
+      "config": {
+        "mode": "auto",
+        "failure_policy": "continue",
+        "max_search_rounds": 3,
+        "max_queries_per_round": 2,
+        "max_total_results": 8,
+        "max_context_chars": 6000,
+        "total_deadline_ms": 15000,
+        "async_timeout_ms": 17000,
+        "require_citations_for_realtime_claims": true,
+        "require_independent_sources_for_high_impact_claims": true,
+        "engines": ["bing"]
+      }
+    },
+    {
+      "id": "vision_input",
+      "type": "vision.input",
+      "config": {
+        "trigger": "vision"
+      }
+    },
+    {
+      "id": "vision_llm",
+      "type": "vision.llm",
+      "config": {
+        "prompt": "请用简洁中文描述当前屏幕画面，重点说明可用于主动开启话题的内容。",
+        "detail": "low",
+        "max_tokens": 256
+      }
+    },
+    {
+      "id": "proactive_topic",
+      "type": "proactive.topic",
+      "config": {
+        "enabled": true,
+        "min_interval_ms": 30000,
+        "dedup_window_ms": 300000,
+        "instruction": "请根据画面中最值得关注的新内容，以桌宠口吻自然地说一句简短中文。不要描述整个画面，不要提及截图或图像识别，也不要虚构看不到的信息。"
+      }
+    },
+    {
+      "id": "memory_retrieve",
+      "type": "memory.retrieve",
+      "config": {}
+    },
+    {
+      "id": "call_llm",
+      "type": "llm.chat",
+      "config": {
+        "temperature": 0.7,
+        "max_tokens": 2048
+      }
+    },
+    {
+      "id": "emotion_rewrite",
+      "type": "emotion.rewrite",
+      "config": {}
+    },
+    {
+      "id": "format_output",
+      "type": "output.format",
+      "config": {}
+    },
+    {
+      "id": "memory_store",
+      "type": "memory.store",
+      "config": {}
+    }
+  ],
+  "edges": [
+    { "from": "user_input", "to": "web_research" },
+    { "from": "web_research", "to": "memory_retrieve" },
+    { "from": "memory_retrieve", "to": "call_llm" },
+    { "from": "vision_input", "to": "vision_llm" },
+    { "from": "vision_llm", "to": "proactive_topic" },
+    { "from": "proactive_topic", "to": "call_llm" },
+    { "from": "call_llm", "to": "emotion_rewrite" },
+    { "from": "emotion_rewrite", "to": "format_output" },
+    { "from": "format_output", "to": "memory_store" }
+  ]
+}

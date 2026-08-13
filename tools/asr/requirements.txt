@@ -1,0 +1,4 @@
+sherpa-onnx>=1.13
+soundfile
+numpy>=2.3
+huggingface-hub

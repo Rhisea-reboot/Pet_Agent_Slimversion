@@ -1,0 +1,37 @@
+{
+  "enabled": true,
+  "data_dir": "",
+  "queue_capacity": 64,
+  "max_results": 6,
+  "prompt_budget_chars": 1200,
+  "default_scope": "pet",
+  "automatic_extraction": false,
+  "consolidation_max_candidates": 4,
+  "maintenance": {
+    "enabled": true,
+    "decay_interval_hours": 24,
+    "cluster_update_retrievals": 20,
+    "max_gap_records": 128,
+    "inferred_tag_min_support": 2,
+    "deep_maintenance_retrievals": 50,
+    "duplicate_similarity_threshold": 0.95,
+    "weak_confidence_threshold": 0.05,
+    "weak_strength_limit": 1,
+    "related_initial_weight": 0.4,
+    "related_weight_increment": 0.1,
+    "max_related_weight": 1.0
+  },
+  "embedding": {
+    "enabled": false,
+    "backend": "local_onnx",
+    "model": "BAAI/bge-small-zh-v1.5",
+    "model_dir": "models/embedding/bge-small-zh-v1.5",
+    "onnx_model": "onnx/model.onnx",
+    "tokenizer_file": "tokenizer.json",
+    "vector_store": "sqlite",
+    "vector_db": "",
+    "max_sequence_length": 512,
+    "device": "cpu",
+    "query_instruction": "为这个句子生成表示以用于检索相关文章："
+  }
+}

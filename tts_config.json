@@ -1,0 +1,8 @@
+{
+    "server_url": "http://127.0.0.1:9880",
+    "server_host": "127.0.0.1",
+    "server_port": 9880,
+    "voice": "zf_xiaobei",
+    "speed": 1.0,
+    "lang": "z"
+}

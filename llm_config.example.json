@@ -1,0 +1,6 @@
+{
+  "base_url": "https://api.openai.com/v1",
+  "api_key": "YOUR_API_KEY",
+  "model": "gpt-4o-mini",
+  "timeout_ms": 30000
+}

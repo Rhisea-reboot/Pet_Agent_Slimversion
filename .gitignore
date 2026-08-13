@@ -1,0 +1,73 @@
+build/
+build-*/
+packaging/out/
+CMakeLists.txt.user
+*.user
+*.exe
+*.dll
+*.out
+*.o
+*.obj
+*.a
+*.so
+*.pdb
+*.ilk
+cmake-build-*/
+Debug/
+Release/
+
+# Local LLM credentials
+llm_config.json
+web_search_config.json
+vision_llm_config.json
+
+# Local open-webSearch runtime artifacts
+vendor/open-webSearch/node_modules/
+vendor/open-webSearch/build/
+vendor/open-webSearch/.runtime/
+
+# Embedding model files (downloaded via scripts/download_bge_model.ps1)
+models/
+
+# Vendored onnxruntime binary artifacts (headers are committed under vendor/onnxruntime/include)
+vendor/onnxruntime/bin/
+
+# GPT-SoVITS — 排除大型二进制文件，仅跟踪 Python 源码与配置
+GPT-SoVITS/runtime/
+GPT-SoVITS/GPT_weights/
+GPT-SoVITS/GPT_weights_v2/
+GPT-SoVITS/GPT_weights_v2Pro/
+GPT-SoVITS/GPT_weights_v2ProPlus/
+GPT-SoVITS/GPT_weights_v3/
+GPT-SoVITS/GPT_weights_v4/
+GPT-SoVITS/SoVITS_weights/
+GPT-SoVITS/SoVITS_weights_v2/
+GPT-SoVITS/SoVITS_weights_v2Pro/
+GPT-SoVITS/SoVITS_weights_v2ProPlus/
+GPT-SoVITS/SoVITS_weights_v3/
+GPT-SoVITS/SoVITS_weights_v4/
+GPT-SoVITS/GPT_SoVITS/pretrained_models/
+GPT-SoVITS/GPT_SoVITS/text/ja_userdic/
+GPT-SoVITS/GPT_SoVITS/text/cmudict-fast.rep
+GPT-SoVITS/GPT_SoVITS/text/cmudict.rep
+GPT-SoVITS/GPT_SoVITS/text/cmudict_cache.pickle
+GPT-SoVITS/GPT_SoVITS/text/engdict-hot.rep
+GPT-SoVITS/GPT_SoVITS/text/engdict_cache.pickle
+GPT-SoVITS/GPT_SoVITS/text/g2pw/polyphonic-fix.rep
+GPT-SoVITS/GPT_SoVITS/text/g2pw/polyphonic.pickle
+GPT-SoVITS/GPT_SoVITS/text/g2pw/polyphonic.rep
+GPT-SoVITS/GPT_SoVITS/__pycache__/
+GPT-SoVITS/GPT_SoVITS/**/__pycache__/
+GPT-SoVITS/__pycache__/
+GPT-SoVITS/**/__pycache__/
+GPT-SoVITS/logs/
+GPT-SoVITS/output/
+GPT-SoVITS/TEMP/
+GPT-SoVITS/tools/
+GPT-SoVITS/*.cache
+
+# slimVersion — Python venv 与本地模型（Kokoro HF 缓存 + SenseVoice）
+runtime/
+models/sensevoice/
+models/hf/
+build-phase*/

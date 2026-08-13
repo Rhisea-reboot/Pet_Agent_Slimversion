@@ -1,0 +1,10 @@
+kokoro==0.7.16
+numpy>=2.3
+scipy
+soundfile
+huggingface-hub
+loguru
+misaki[zh]
+num2words
+phonemizer
+spacy

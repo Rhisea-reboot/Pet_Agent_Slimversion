@@ -1,0 +1,11 @@
+{
+  "base_url": "https://api.openai.com/v1",
+  "api_key": "YOUR_API_KEY",
+  "model": "gpt-4o",
+  "timeout_ms": 30000,
+  "media_type": "image/jpeg",
+  "default_prompt": "请描述这张截图中和用户当前操作相关的关键信息。",
+  "detail": "auto",
+  "temperature": 0.2,
+  "max_tokens": 1024
+}

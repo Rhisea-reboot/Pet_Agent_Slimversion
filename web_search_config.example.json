@@ -1,0 +1,10 @@
+{
+  "base_url": "http://127.0.0.1:3210",
+  "authorization_token_env": "VPET_WEB_SEARCH_TOKEN",
+  "request_timeout_ms": 15000,
+  "min_search_interval_ms": 3000,
+  "max_throttle_wait_ms": 3000,
+  "max_response_bytes": 1048576,
+  "max_results": 5,
+  "max_description_chars": 500
+}
