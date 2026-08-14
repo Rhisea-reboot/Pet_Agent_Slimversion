@@ -550,10 +550,8 @@ copy memory_config.example.json memory_config.json
 | [BUILD_PLAN.md](BUILD_PLAN.md) | 轻量版构建计划（Kokoro / SenseVoice 替换全量版语音链路） |
 | [AGENT_CONTEXT_KEY_PROTOCOL.md](AGENT_CONTEXT_KEY_PROTOCOL.md) | Agent 上下文 key 协议 |
 | [FRAMEWORK.md](FRAMEWORK.md) | 视觉感知框架设计 |
-| [DEVELOPMENT_LOG.md](DEVELOPMENT_LOG.md) | 开发日志 |
 | [vpet.md](vpet.md) | 动画与交互设计 |
 | [Structure.md](Structure.md) | Agent DAG 设计理念 |
-| [PROJECT_DEVELOPMENT_REPORT.md](PROJECT_DEVELOPMENT_REPORT.md) | 项目开发报告 |
 | [docs/memory_architecture.md](docs/memory_architecture.md) | 长期记忆架构设计 |
 | [docs/long_term_memory_implementation_plan.md](docs/long_term_memory_implementation_plan.md) | 长期记忆实施计划与进度 |
 | [docs/tts_integration_plan.md](docs/tts_integration_plan.md) | TTS 集成说明 |

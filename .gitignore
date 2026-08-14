@@ -71,3 +71,8 @@ runtime/
 models/sensevoice/
 models/hf/
 build-phase*/
+
+# 个人开发日志与评审记录（不公开，保留本地）
+DEVELOPMENT_LOG.md
+PROJECT_DEVELOPMENT_REPORT.md
+docs/project_evaluation_*.md
