@@ -3,7 +3,8 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$ReleaseDirectory,
     [ValidateRange(0, [int]::MaxValue)]
-    [int]$CoreSizeLimitMiB = 500
+    [int]$CoreSizeLimitMiB = 500,
+    [switch]$KokoroIncluded
 )
 
 $ErrorActionPreference = "Stop"
@@ -16,6 +17,11 @@ $requiredFiles = @(
     "VPet.exe",
     "tts_config.json",
     "agent_dag_structure.json",
+    "LICENSE",
+    "THIRD_PARTY_NOTICES.md",
+    "licenses\LGPL-3.0.txt",
+    "licenses\LGPL-2.1.txt",
+    "licenses\MIT.txt",
     "platforms\qwindows.dll",
     "tools\kokoro\kokoro_server.py",
     "tools\asr\sensevoice_transcribe.py",
@@ -28,11 +34,8 @@ if ($missing.Count -gt 0) {
     throw ("Release self-check failed. Missing:`n" + ($missing -join [Environment]::NewLine))
 }
 
-$forbiddenPaths = @(
-    "GPT-SoVITS",
-    "models\vosk",
-    "models\hf"
-)
+$forbiddenPaths = @("GPT-SoVITS", "models\vosk")
+if (-not $KokoroIncluded) { $forbiddenPaths += "models\hf" }
 $forbidden = @($forbiddenPaths | Where-Object { Test-Path -LiteralPath (Join-Path $ReleaseDirectory $_) })
 if ($forbidden.Count -gt 0) {
     throw ("Release self-check failed. Forbidden legacy/cache paths found:`n" + ($forbidden -join [Environment]::NewLine))
@@ -75,6 +78,27 @@ try {
 
     & $python -c "import torch, kokoro, sherpa_onnx, soundfile, numpy; print('slim runtime imports ok')"
     if ($LASTEXITCODE -ne 0) { throw "Release self-check failed: Python runtime imports failed" }
+
+    if ($KokoroIncluded) {
+        $kokoroHub = Join-Path $ReleaseDirectory "models\hf\hub\models--hexgrad--Kokoro-82M"
+        if (-not (Test-Path -LiteralPath (Join-Path $kokoroHub "refs\main"))) {
+            throw "Release self-check failed: Kokoro HF cache refs\main is missing"
+        }
+        $kokoroSnapshotCount = @(Get-ChildItem -LiteralPath (Join-Path $kokoroHub "snapshots") -Directory -ErrorAction SilentlyContinue).Count
+        if ($kokoroSnapshotCount -eq 0) { throw "Release self-check failed: Kokoro HF cache has no snapshots" }
+        $previousHfHome = $env:HF_HOME
+        $previousHfOffline = $env:HF_HUB_OFFLINE
+        $env:HF_HOME = Join-Path $ReleaseDirectory "models\hf"
+        $env:HF_HUB_OFFLINE = "1"
+        try {
+            & $python -c "from kokoro import KPipeline; KPipeline(lang_code='z'); print('kokoro offline load ok')"
+            if ($LASTEXITCODE -ne 0) { throw "Release self-check failed: Kokoro model could not be loaded from bundled cache (offline)" }
+        }
+        finally {
+            $env:HF_HOME = $previousHfHome
+            $env:HF_HUB_OFFLINE = $previousHfOffline
+        }
+    }
 }
 finally {
     $env:PYTHONDONTWRITEBYTECODE = $previousNoBytecode
@@ -91,6 +115,8 @@ function Get-DirectoryBytes {
 $totalBytes = Get-DirectoryBytes -Path $ReleaseDirectory
 $runtimeBytes = Get-DirectoryBytes -Path (Join-Path $ReleaseDirectory "runtime")
 $modelBytes = Get-DirectoryBytes -Path (Join-Path $ReleaseDirectory "models\sensevoice")
+$kokoroBytes = 0
+if ($KokoroIncluded) { $kokoroBytes = Get-DirectoryBytes -Path (Join-Path $ReleaseDirectory "models\hf") }
 $coreBytes = $totalBytes - $runtimeBytes
 $coreMiB = [math]::Round($coreBytes / 1MB, 2)
 
@@ -99,8 +125,10 @@ if ($coreMiB -gt $CoreSizeLimitMiB) {
 }
 
 Write-Host ("Release self-check passed. Animation PNG count: {0}" -f $animationCount)
-Write-Host ("Package size: {0} MiB (runtime: {1} MiB, SenseVoice: {2} MiB, core: {3} MiB)" -f
+Write-Host (
+    "Package size: {0} MiB (runtime: {1} MiB, SenseVoice: {2} MiB, Kokoro weights: {3} MiB, core: {4} MiB)" -f
     ([math]::Round($totalBytes / 1MB, 2)),
     ([math]::Round($runtimeBytes / 1MB, 2)),
     ([math]::Round($modelBytes / 1MB, 2)),
+    ([math]::Round($kokoroBytes / 1MB, 2)),
     $coreMiB)

@@ -1,4 +1,4 @@
-﻿# VPet / Pet Agent
+# VPet / Pet Agent
 
 基于 Qt 6 的 Windows 桌面宠物，支持动画交互、语音输入、屏幕视觉感知、DAG 编排的 LLM Agent，以及 TTS 语音播报。
 
@@ -564,4 +564,11 @@ copy memory_config.example.json memory_config.json
 
 ## 许可证
 
-以仓库内实际声明为准。第三方组件（如 Kokoro、SenseVoice / sherpa-onnx、open-webSearch、Qt）遵循各自许可证。
+- **自有代码**（`src/`、`include/`、`tests/` 等本仓库编写内容）：[Apache License 2.0](LICENSE)
+- **第三方组件**（Qt、FFmpeg、onnxruntime、open-webSearch、Kokoro、sherpa-onnx、模型权重、动画资产等）：
+  许可证与合规义务见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)，许可证全文见 `licenses/` 目录。
+
+> **动画资产来源告知（VPet (C#) 动画版权授权要求）**：本项目的 `Animation/` 序列帧动画来自开源项目
+> [LorisYounger/VPet](https://github.com/LorisYounger/VPet)（版权归虚拟主播模拟器制作组），按该项目
+> 「动画版权声明与授权」的非商业条款使用。商业用途需先联系原作者并遵守其授权要求（详见
+> [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) §2.6）。

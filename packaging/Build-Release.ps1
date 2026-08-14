@@ -7,8 +7,9 @@ param(
     [string]$InstallerDirectory = "",
     [string]$CMakePath = "",
     [string]$NinjaPath = "",
-    [string]$MinGWBin = "",
-    [int]$CoreSizeLimitMiB = 500
+[string]$MinGWBin = "",
+    [int]$CoreSizeLimitMiB = 500,
+    [switch]$IncludeKokoroWeights
 )
 
 $ErrorActionPreference = "Stop"
@@ -115,6 +116,15 @@ $InstallerDirectory = [System.IO.Path]::GetFullPath($InstallerDirectory)
 foreach ($path in @($QtPrefix, $qtDeploy, $qtCmake, $ninja, $mingwBin, $qtConfigDir, (Join-Path $root "Animation"), (Join-Path $root "runtime"), (Join-Path $root "tools\kokoro\kokoro_server.py"), (Join-Path $root "tools\asr\sensevoice_transcribe.py"), (Join-Path $root "models\sensevoice\model.int8.onnx"), (Join-Path $root "models\sensevoice\tokens.txt"), (Join-Path $root "tts_config.json"))) {
     if (-not (Test-Path -LiteralPath $path)) { throw "Required release input is missing: $path" }
 }
+if ($IncludeKokoroWeights) {
+    if (-not (Test-Path -LiteralPath (Join-Path $root "models\hf\hub\models--hexgrad--Kokoro-82M\refs\main"))) {
+        throw "Required release input is missing: Kokoro HF cache (models\hf)"
+    }
+    if ($CoreSizeLimitMiB -lt 1000) {
+        Write-Verbose "Raising core size limit to 1000 MiB because Kokoro weights are bundled."
+        $CoreSizeLimitMiB = 1000
+    }
+}
 if (Test-Path -LiteralPath $OutputDirectory) {
     throw "Release output already exists; choose a new output directory: $OutputDirectory"
 }
@@ -136,6 +146,18 @@ Copy-Item -LiteralPath $exePath -Destination (Join-Path $OutputDirectory "VPet.e
 
 Copy-Item -LiteralPath (Join-Path $root "tools") -Destination (Join-Path $OutputDirectory "tools") -Recurse -Force
 Copy-Item -LiteralPath (Join-Path $root "models\sensevoice") -Destination (Join-Path $OutputDirectory "models\sensevoice") -Recurse -Force
+
+if ($IncludeKokoroWeights) {
+    # 只搬运快照文件与 refs（解引用符号链接），跳过 blobs：huggingface_hub 加载仅需
+    # snapshot 文件存在即可，保留 blobs 会使体积翻倍且无功能收益。
+    $hfHubSrc = Join-Path $root "models\hf\hub\models--hexgrad--Kokoro-82M"
+    $hfHubDst = Join-Path $OutputDirectory "models\hf\hub\models--hexgrad--Kokoro-82M"
+    New-Item -ItemType Directory -Path (Join-Path $hfHubDst "snapshots") -Force | Out-Null
+    Get-ChildItem -LiteralPath (Join-Path $hfHubSrc "snapshots") -Directory | ForEach-Object {
+        Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $hfHubDst "snapshots") -Recurse -Force
+    }
+    Copy-Item -LiteralPath (Join-Path $hfHubSrc "refs") -Destination (Join-Path $hfHubDst "refs") -Recurse -Force
+}
 
 # --- 组装自包含 Python 运行时（便携布局，不依赖开发机的 base Python） ---
 # 开发期 venv 的 pyvenv.cfg 指向 F:\python.exe；直接复制 venv 不具备可移植性。
@@ -185,6 +207,11 @@ Copy-Item -LiteralPath (Join-Path $root "Animation") -Destination (Join-Path $Ou
 Copy-Item -LiteralPath (Join-Path $root "tts_config.json") -Destination $OutputDirectory -Force
 Copy-Item -LiteralPath (Join-Path $root "agent_dag_structure.json") -Destination $OutputDirectory -Force
 
+# --- 许可证合规：随发行包分发自有 LICENSE、第三方声明与许可证全文 ---
+Copy-Item -LiteralPath (Join-Path $root "LICENSE") -Destination $OutputDirectory -Force
+Copy-Item -LiteralPath (Join-Path $root "THIRD_PARTY_NOTICES.md") -Destination $OutputDirectory -Force
+Copy-Item -LiteralPath (Join-Path $root "licenses") -Destination (Join-Path $OutputDirectory "licenses") -Recurse -Force
+
 # Remove generated Python bytecode and repository-only model/cache artifacts from copied trees.
 Get-ChildItem -LiteralPath $OutputDirectory -Recurse -Force -Directory -ErrorAction SilentlyContinue |
     Where-Object { $_.Name -in @("__pycache__", ".pytest_cache", ".cache") } |
@@ -196,7 +223,12 @@ Get-ChildItem -LiteralPath $OutputDirectory -Recurse -Force -File -ErrorAction S
 & $qtDeploy --release --no-translations --compiler-runtime (Join-Path $OutputDirectory "VPet.exe")
 if ($LASTEXITCODE -ne 0) { throw "windeployqt failed" }
 
-& (Join-Path $PSScriptRoot "Test-Release.ps1") -ReleaseDirectory $OutputDirectory -CoreSizeLimitMiB $CoreSizeLimitMiB
+$testArgs = @{
+    ReleaseDirectory = $OutputDirectory
+    CoreSizeLimitMiB = $CoreSizeLimitMiB
+}
+if ($IncludeKokoroWeights) { $testArgs.KokoroIncluded = $true }
+& (Join-Path $PSScriptRoot "Test-Release.ps1") @testArgs
 if ($LASTEXITCODE -ne 0) { throw "Release self-check failed" }
 
 $isccCandidates = @(
@@ -212,7 +244,7 @@ if ($isccCandidates.Count -eq 0) {
 }
 
 $env:VPET_RELEASE_DIR = $OutputDirectory
-$iscc = $isccCandidates[0]
+$iscc = @($isccCandidates)[0]
 & $iscc ("/O{0}" -f $InstallerDirectory) (Join-Path $PSScriptRoot "VPet.iss")
 if ($LASTEXITCODE -ne 0) { throw "Inno Setup compilation failed" }
 Write-Host "Release directory and installer created: $OutputDirectory"

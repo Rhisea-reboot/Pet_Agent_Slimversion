@@ -11,6 +11,7 @@ Compression=lzma2
 SolidCompression=yes
 DiskSpanning=yes
 DiskSliceSize=2000000000
+LicenseFile={#SourceDir}\LICENSE
 
 [Files]
 Source: "{#SourceDir}\*"; DestDir: "{app}"; Flags: recursesubdirs ignoreversion
