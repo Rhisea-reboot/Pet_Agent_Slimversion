@@ -76,3 +76,6 @@ build-phase*/
 DEVELOPMENT_LOG.md
 PROJECT_DEVELOPMENT_REPORT.md
 docs/project_evaluation_*.md
+
+# 个人手工调试程序（不公开，保留本地）
+tests/manual/

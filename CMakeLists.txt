@@ -607,39 +607,6 @@ if(BUILD_TESTING)
 
     add_test(NAME memory_embedding_tests COMMAND memory_embedding_tests)
 
-    add_executable(memory_embedding_e2e
-        tests/manual/test_embedding_e2e.cpp
-        src/memory/embedding_client.cpp
-        src/memory/vector_store.cpp
-        src/memory/memory_graph.cpp
-        src/memory/memory_repository.cpp
-        src/memory/memory_service.cpp
-        src/memory/memory_maintenance.cpp
-        include/vpet/memory/embedding_client.h
-        include/vpet/memory/vector_store.h
-        include/vpet/memory/memory_graph.h
-        include/vpet/memory/memory_repository.h
-        include/vpet/memory/memory_service.h
-        include/vpet/memory/memory_maintenance.h
-    )
-
-    target_include_directories(memory_embedding_e2e
-        PRIVATE
-            ${CMAKE_CURRENT_SOURCE_DIR}/include
-            ${VPET_VENDOR_ONNXRUNTIME_INCLUDE}
-    )
-
-    target_link_libraries(memory_embedding_e2e
-        PRIVATE
-            Qt6::Core
-            Qt6::Sql
-    )
-
-    vpet_deploy_qt_sqlite(memory_embedding_e2e)
-    vpet_deploy_onnxruntime(memory_embedding_e2e)
-
-    set_property(TARGET memory_embedding_e2e PROPERTY AUTOMOC_COMPILER_PREDEFINES OFF)
-
     add_executable(perception_pipeline_tests
         tests/perception_pipeline_test.cpp
         src/perception/frame_buffer.cpp
