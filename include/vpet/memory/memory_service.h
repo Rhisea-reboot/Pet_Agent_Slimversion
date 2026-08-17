@@ -7,7 +7,6 @@
 #include "vpet/memory/memory_repository.h"
 #include "vpet/memory/vector_store.h"
 
-#include <QAtomicInt>
 #include <QAtomicInteger>
 #include <QHash>
 #include <QMutex>
@@ -183,8 +182,8 @@ public:
     bool IsRunning() const;
 
     /**
-     * @brief 停止接收任务、处理已提交写入并在有限时间内落盘退出
-     * @param[in] timeoutMs 等待 worker 退出的最大毫秒数
+     * @brief 停止接收任务、处理已提交写入并安全退出
+     * @param[in] timeoutMs 首次等待 worker 退出的诊断超时；超时后仍继续等待安全退出
      */
     void Shutdown(int timeoutMs);
 
@@ -482,8 +481,9 @@ private:
     mutable QMutex m_mailboxMutex;   ///< mailbox 锁
     QHash<QString, _tagRetrieveResult> m_mailbox; ///< petId|triggerType -> 最新结果
     QAtomicInteger<quint64> m_nextRequestId;      ///< 请求 ID 分配器
-    QAtomicInt m_shuttingDown;       ///< 关闭标志
-    bool m_isRunning;                ///< 是否已启动
+    // Lifecycle state is serialized with queue admission under m_queueMutex.
+    bool m_shuttingDown = false;    ///< 是否已拒绝新任务并等待队列排空
+    bool m_isRunning = false;       ///< 是否已启动且允许任务入队
 
     EmbeddingConfig m_embeddingConfig; ///< embedding 配置（Start 前设置）
     bool m_embeddingConfigured = false; ///< 是否已配置 embedding

@@ -174,18 +174,13 @@ MemoryService::MemoryService(QObject *parent)
     : QObject(parent)
     , m_workerThread(nullptr)
     , m_queueCapacity(0)
-    , m_isRunning(false)
 {
     m_nextRequestId.storeRelease(1);
-    m_shuttingDown.storeRelease(0);
 }
 
 MemoryService::~MemoryService()
 {
-    if (m_isRunning)
-    {
-        Shutdown(DEFAULT_SHUTDOWN_TIMEOUT_MS);
-    }
+    Shutdown(DEFAULT_SHUTDOWN_TIMEOUT_MS);
 }
 
 bool MemoryService::ParseConfig(const QString &configPath,
@@ -432,6 +427,8 @@ QString MemoryService::BuildPromptSection(const QVector<MemoryEntry> &entries,
 
 bool MemoryService::SetEmbeddingConfig(const EmbeddingConfig &config, QString &errorMessage)
 {
+    QMutexLocker locker(&m_queueMutex);
+
     if (m_isRunning)
     {
         errorMessage = QStringLiteral("Embedding config must be set before Start.");
@@ -452,6 +449,8 @@ bool MemoryService::SetEmbeddingConfig(const EmbeddingConfig &config, QString &e
 bool MemoryService::SetMaintenanceConfig(const _tagMemoryMaintenanceConfig &config,
                                          QString &errorMessage)
 {
+    QMutexLocker locker(&m_queueMutex);
+
     if (m_isRunning)
     {
         errorMessage = QStringLiteral("Memory maintenance config must be set before Start.");
@@ -463,6 +462,8 @@ bool MemoryService::SetMaintenanceConfig(const _tagMemoryMaintenanceConfig &conf
 
 void MemoryService::InstallEmbedderForTest(std::unique_ptr<MemoryEmbedder> embedder)
 {
+    QMutexLocker locker(&m_queueMutex);
+
     if (m_isRunning)
     {
         return;
@@ -477,6 +478,8 @@ bool MemoryService::Start(const QString &dataDir,
                           int queueCapacity,
                           QString &errorMessage)
 {
+    QMutexLocker locker(&m_queueMutex);
+
     if (m_isRunning)
     {
         errorMessage = QStringLiteral("Memory service is already running.");
@@ -547,44 +550,62 @@ bool MemoryService::Start(const QString &dataDir,
     m_queueCapacity = queueCapacity;
     m_taskQueue.clear();
     m_vectorBackfillComplete = false;
-    m_shuttingDown.storeRelease(0);
+    m_shuttingDown = false;
     m_isRunning = true;
 
     m_workerThread = QThread::create([this]() { WorkerLoop(); });
     m_workerThread->setObjectName(QStringLiteral("memory-worker"));
     m_workerThread->start();
 
+    locker.unlock();
     emit LogMessage(QStringLiteral("Memory service started."));
     return true;
 }
 
 bool MemoryService::IsRunning() const
 {
+    QMutexLocker locker(&m_queueMutex);
     return m_isRunning;
 }
 
 void MemoryService::Shutdown(int timeoutMs)
 {
-    if (!m_isRunning)
+    QThread *workerThread = nullptr;
+
     {
-        return;
+        QMutexLocker locker(&m_queueMutex);
+
+        if (!m_isRunning || (m_workerThread == nullptr))
+        {
+            return;
+        }
+
+        // Stop admission first. The worker drains the already accepted queue and
+        // returns only after the current task reaches its normal commit boundary.
+        m_shuttingDown = true;
+        m_isRunning = false;
+        workerThread = m_workerThread;
+        m_queueNotEmpty.wakeAll();
     }
 
-    m_shuttingDown.storeRelease(1);
-    m_isRunning = false;
-    m_queueNotEmpty.wakeOne();
-
-    if (!m_workerThread->wait(timeoutMs))
+    if (!workerThread->wait(timeoutMs))
     {
-        qWarning() << "[Memory] Worker thread did not stop within" << timeoutMs
-                   << "ms; forcing termination.";
-        m_workerThread->terminate();
-        m_workerThread->wait(1000);
+        qWarning() << "[Memory] Worker shutdown exceeded" << timeoutMs
+                   << "ms; waiting for the current task to finish safely.";
+        // Never force-stop or delete a live worker: memory graph and SQLite writes
+        // must finish before their owning objects are destroyed.
+        workerThread->wait();
     }
 
-    delete m_workerThread;
-    m_workerThread = nullptr;
+    {
+        QMutexLocker locker(&m_queueMutex);
+        if (m_workerThread == workerThread)
+        {
+            m_workerThread = nullptr;
+        }
+    }
 
+    delete workerThread;
     emit LogMessage(QStringLiteral("Memory service stopped."));
 }
 
@@ -884,6 +905,7 @@ int MemoryService::PendingCount() const
 
 int MemoryService::QueueCapacity() const
 {
+    QMutexLocker locker(&m_queueMutex);
     return m_queueCapacity;
 }
 
@@ -920,7 +942,7 @@ void MemoryService::WorkerLoop()
         {
             QMutexLocker locker(&m_queueMutex);
 
-            while (m_taskQueue.isEmpty() && (m_shuttingDown.loadAcquire() == 0))
+            while (m_taskQueue.isEmpty() && !m_shuttingDown)
             {
                 m_queueNotEmpty.wait(&m_queueMutex);
             }
@@ -949,32 +971,35 @@ void MemoryService::WorkerLoop()
 
 bool MemoryService::EnqueueTask(const _tagTask &task, quint64 *requestId)
 {
-    if (!m_isRunning)
-    {
-        EmitLogMessage(QStringLiteral("Memory task rejected: service is not running."));
-        return false;
-    }
-
-    if (m_shuttingDown.loadAcquire() != 0)
-    {
-        EmitLogMessage(QStringLiteral("Memory task rejected: service is shutting down."));
-        return false;
-    }
-
     _tagTask queuedTask = task;
-    queuedTask.requestId = m_nextRequestId.fetchAndAddRelaxed(1);
+    QString rejectionMessage;
 
     {
         QMutexLocker locker(&m_queueMutex);
 
-        if (m_taskQueue.size() >= m_queueCapacity)
+        // Shutdown() changes this state under the same lock, so admission and
+        // the worker's empty-queue exit decision are linearized together.
+        if (!m_isRunning || m_shuttingDown)
         {
-            EmitLogMessage(QStringLiteral("Memory task queue is full; task rejected (%1).")
-                               .arg(ActionToString(task.action)));
-            return false;
+            rejectionMessage = QStringLiteral("Memory task rejected: service is not running.");
         }
+        else if (m_taskQueue.size() >= m_queueCapacity)
+        {
+            rejectionMessage = QStringLiteral("Memory task queue is full; task rejected (%1).")
+                                   .arg(ActionToString(task.action));
+        }
+        else
+        {
+            queuedTask.requestId = m_nextRequestId.fetchAndAddRelaxed(1);
+            m_taskQueue.enqueue(queuedTask);
+            m_queueNotEmpty.wakeOne();
+        }
+    }
 
-        m_taskQueue.enqueue(queuedTask);
+    if (!rejectionMessage.isEmpty())
+    {
+        EmitLogMessage(rejectionMessage);
+        return false;
     }
 
     if (requestId != nullptr)
@@ -982,7 +1007,6 @@ bool MemoryService::EnqueueTask(const _tagTask &task, quint64 *requestId)
         *requestId = queuedTask.requestId;
     }
 
-    m_queueNotEmpty.wakeOne();
     return true;
 }
 
