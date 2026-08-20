@@ -66,14 +66,22 @@ public:
      * @param[in] text 要合成的文本，不得为空
      * @param[in] outputPath 输出 WAV 文件路径，不得为空
      */
-    void Synthesize(const QString &text, const QString &outputPath);
+    int Synthesize(const QString &text, const QString &outputPath);
+
+    /**
+     * @brief 取消指定的在途合成请求
+     * @param[in] requestId 合成请求 ID
+     * @return 找到并发出取消返回 true
+     */
+    bool Cancel(int requestId);
 
 signals:
     /**
      * @brief 语音合成完成信号
+     * @param[in] requestId 合成请求 ID
      * @param[in] filePath 合成后的音频文件路径；失败时为空字符串
      */
-    void SynthesisFinished(const QString &filePath);
+    void SynthesisFinished(int requestId, const QString &filePath);
 
 private slots:
     /**
@@ -86,6 +94,7 @@ private:
     QNetworkAccessManager *m_networkManager; ///< HTTP 网络管理器
     _tagTtsConfig m_config;                  ///< TTS 配置信息
     bool m_isConfigured;                     ///< 是否已加载配置
+    int m_nextRequestId;                     ///< 下一个合成请求 ID
 };
 
 } // namespace vpet

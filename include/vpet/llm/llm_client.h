@@ -1,6 +1,7 @@
 #ifndef VPET_LLM_LLM_CLIENT_H
 #define VPET_LLM_LLM_CLIENT_H
 
+#include <QHash>
 #include <QObject>
 #include <QString>
 #include <QVector>
@@ -52,6 +53,7 @@ struct _tagLlmRequestOptions
     double frequencyPenalty = 0.0; ///< 频率惩罚，范围 -2 到 2
     double presencePenalty = 0.0;  ///< 存在惩罚，范围 -2 到 2
     int maxTokens = 2048;          ///< 最大输出 token 数
+    bool stream = false;           ///< 是否使用 SSE 流式响应
 };
 
 /**
@@ -143,6 +145,20 @@ public:
 
 signals:
     /**
+     * @brief 流式回复增量信号
+     * @param[in] requestId 请求 ID
+     * @param[in] deltaContent 本次新增文本
+     */
+    void ChatDelta(int requestId, const QString &deltaContent);
+
+    /**
+     * @brief 流式回复接收完成信号
+     * @param[in] requestId 请求 ID
+     * @param[in] fullContent 累积的完整回复文本
+     */
+    void ChatStreamFinished(int requestId, const QString &fullContent);
+
+    /**
      * @brief LLM 回复完成信号
      * @param[in] requestId 请求 ID
      * @param[in] content 回复文本
@@ -158,6 +174,11 @@ signals:
     void ChatFailed(int requestId, const QString &message, int statusCode);
 
 private slots:
+    /**
+     * @brief 处理 SSE 响应的可读数据
+     */
+    void OnReplyReadyRead();
+
     /**
      * @brief 处理 HTTP 响应
      * @param[in] reply 网络响应对象
@@ -215,11 +236,20 @@ private:
      */
     static bool HasSystemMessage(const QVector<_tagLlmMessage> &messages);
 
+    /**
+     * @brief 解析当前缓冲区中的完整 SSE 行
+     * @param[in] requestId 请求 ID
+     * @param[in] flushRemainder 是否将末尾无换行内容作为完整行处理
+     */
+    void ProcessStreamBuffer(int requestId, bool flushRemainder);
+
     QNetworkAccessManager *m_networkManager; ///< HTTP 网络管理器
     _tagLlmConfig m_config;                  ///< LLM 配置信息
     QString m_systemPrompt;                  ///< 从 context.md 读取的系统提示词
     bool m_isConfigured;                     ///< 是否已配置
     int m_nextRequestId;                     ///< 下一个请求 ID
+    QHash<int, QByteArray> m_streamBuffers;  ///< 按请求隔离的 SSE 字节缓冲
+    QHash<int, QString> m_accumulatedTexts;  ///< 按请求累积的流式文本
 };
 
 } // namespace vpet

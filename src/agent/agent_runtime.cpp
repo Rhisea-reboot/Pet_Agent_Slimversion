@@ -58,6 +58,12 @@ AgentRuntime::AgentRuntime(WebResearchEngine *webResearchEngine,
 {
     connect(m_llmClient, &LlmClient::ChatCompleted,
             this, &AgentRuntime::OnLlmChatCompleted);
+    connect(m_llmClient, &LlmClient::ChatDelta,
+            this, &AgentRuntime::OnLlmChatDelta);
+    connect(m_llmClient, &LlmClient::ChatStreamFinished,
+            this, &AgentRuntime::OnLlmChatStreamFinished);
+    connect(&m_sentenceSplitter, &StreamSentenceSplitter::SentenceReady,
+            this, &AgentRuntime::StreamSentenceReady);
     connect(m_llmClient, &LlmClient::ChatFailed,
             this, &AgentRuntime::OnLlmChatFailed);
     connect(m_visionLlmClient, &VisionLlmClient::AnalysisCompleted,

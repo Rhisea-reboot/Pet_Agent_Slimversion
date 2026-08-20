@@ -9,6 +9,7 @@
 #include "vpet/agent/agent_output_policy.h"
 #include "vpet/llm/vision_llm_client.h"
 #include "vpet/memory/memory_consolidator.h"
+#include "vpet/stream_sentence_splitter.h"
 #include "vpet/memory/memory_service.h"
 #include "vpet/web/web_research_engine.h"
 
@@ -322,6 +323,12 @@ signals:
      */
     void LlmResponseReceived(int requestId, const QString &content);
 
+    /** @brief 主 LLM 流式回复的一句已经可用于 TTS。 */
+    void StreamSentenceReady(const vpet::SentenceChunk &chunk);
+
+    /** @brief 主 LLM 流式回复已经结束并完成尾包冲刷。 */
+    void StreamResponseFinished(int requestId);
+
     /**
      * @brief Agent 最终输出就绪信号
      * @param[in] requestId 触发最终输出的请求 ID
@@ -357,6 +364,12 @@ private slots:
      * @param[in] content 回复文本
      */
     void OnLlmChatCompleted(int requestId, const QString &content);
+
+    /** @brief 接收主 LLM 的流式增量。 */
+    void OnLlmChatDelta(int requestId, const QString &delta);
+
+    /** @brief 接收主 LLM 的流式完成通知。 */
+    void OnLlmChatStreamFinished(int requestId, const QString &fullContent);
 
     /**
      * @brief 处理文本 LLM 请求失败
@@ -667,6 +680,13 @@ private:
      */
     bool SendUserInputToLlm(const QString &userInput, QString &errorMessage);
 
+public:
+    /** @brief 取消当前用户请求及其前台流式输出。 */
+    bool CancelUserRequest(int requestId);
+
+    /** @brief 取消所有在途前台流式 LLM 请求（打断时统一调用）。 */
+    void CancelActiveStreaming();
+
 private:
     /**
      * @brief 单轮在线调度状态
@@ -681,6 +701,9 @@ private:
     MemoryConfig m_memoryConfig;           ///< 记忆服务配置
     bool m_memoryConfigLoaded;             ///< 是否已加载记忆配置
     MemoryConsolidator m_memoryConsolidator; ///< LLM 巩固请求关联器
+    StreamSentenceSplitter m_sentenceSplitter; ///< 主回复流式断句器
+    QSet<int> m_streamingLlmRequests;       ///< 启用前台流式输出的请求 ID
+    QSet<int> m_cancelledUserRequests;      ///< 用户主动取消的请求 ID（不按失败上报）
     QStringList m_latestSurfacedMemoryIds; ///< 最近一次回答实际注入的记忆 ID
     AgentNodeRegistry m_nodeRegistry;     ///< 节点注册与别名执行组件
     AgentGraphExecutor m_graphExecutor;   ///< DAG 与单轮调度组件

@@ -1,6 +1,7 @@
 build/
 build-*/
 packaging/out/
+Testing/
 CMakeLists.txt.user
 *.user
 *.exe

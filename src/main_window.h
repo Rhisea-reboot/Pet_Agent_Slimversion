@@ -2,12 +2,14 @@
 #define VPET_MAIN_WINDOW_H
 
 #include "vpet/pet_controller.h"
+#include "vpet/stream_sentence_splitter.h"
 
 #include <QByteArray>
 #include <QLabel>
 #include <QKeyEvent>
 #include <QMouseEvent>
 #include <QPoint>
+#include <QSet>
 #include <QWidget>
 
 class QMenu;
@@ -195,6 +197,9 @@ private slots:
      */
     void OnAgentOutputReady(int requestId, const QString &content, const QString &source);
 
+    void OnStreamSentenceReady(const vpet::SentenceChunk &chunk);
+    void OnStreamResponseFinished(int requestId);
+
     /**
      * @brief Agent LLM 请求失败槽
      * @param[in] requestId 请求 ID
@@ -282,6 +287,7 @@ private:
 
 private:
     PetController *m_controller;          ///< 宠物控制器
+    QSet<int> m_streamingRequests;         ///< 当前前台流式请求 ID
     QLabel *m_imageLabel;                 ///< 帧显示标签
     QLabel *m_bubbleLabel;                ///< 气泡标签
     QLabel *m_perceptionIndicatorLabel;   ///< 屏幕感知开启时的红色指示点

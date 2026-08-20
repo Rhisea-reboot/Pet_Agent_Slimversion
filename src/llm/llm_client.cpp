@@ -207,7 +207,7 @@ int LlmClient::SendChat(const QVector<_tagLlmMessage> &messages,
     body[QStringLiteral("frequency_penalty")] = normalizedOptions.frequencyPenalty;
     body[QStringLiteral("presence_penalty")] = normalizedOptions.presencePenalty;
     body[QStringLiteral("max_tokens")] = normalizedOptions.maxTokens;
-    body[QStringLiteral("stream")] = false;
+    body[QStringLiteral("stream")] = normalizedOptions.stream;
 
     const QByteArray bodyData = QJsonDocument(body).toJson(QJsonDocument::Compact);
     const QUrl requestUrl(m_config.baseUrl + QStringLiteral("/chat/completions"));
@@ -235,6 +235,15 @@ int LlmClient::SendChat(const QVector<_tagLlmMessage> &messages,
     }
 
     reply->setProperty("requestId", requestId);
+    reply->setProperty("stream", normalizedOptions.stream);
+
+    if (normalizedOptions.stream)
+    {
+        m_streamBuffers.insert(requestId, QByteArray());
+        m_accumulatedTexts.insert(requestId, QString());
+        connect(reply, &QNetworkReply::readyRead,
+                this, &LlmClient::OnReplyReadyRead);
+    }
 
     return requestId;
 }
@@ -292,6 +301,103 @@ bool LlmClient::CancelRequest(int requestId)
     return false;
 }
 
+void LlmClient::OnReplyReadyRead()
+{
+    QNetworkReply *reply = qobject_cast<QNetworkReply *>(sender());
+
+    if ((reply == nullptr) || !reply->property("stream").toBool())
+    {
+        return;
+    }
+
+    const int requestId = reply->property("requestId").toInt();
+
+    if (requestId <= 0)
+    {
+        return;
+    }
+
+    m_streamBuffers[requestId].append(reply->readAll());
+    ProcessStreamBuffer(requestId, false);
+}
+
+void LlmClient::ProcessStreamBuffer(int requestId, bool flushRemainder)
+{
+    auto bufferIterator = m_streamBuffers.find(requestId);
+
+    if (bufferIterator == m_streamBuffers.end())
+    {
+        return;
+    }
+
+    QByteArray &buffer = bufferIterator.value();
+
+    while (true)
+    {
+        const int newlineIndex = buffer.indexOf('\n');
+
+        if (newlineIndex < 0)
+        {
+            if (!flushRemainder || buffer.isEmpty())
+            {
+                break;
+            }
+        }
+
+        QByteArray line;
+
+        if (newlineIndex >= 0)
+        {
+            line = buffer.left(newlineIndex);
+            buffer.remove(0, newlineIndex + 1);
+        }
+        else
+        {
+            line = buffer;
+            buffer.clear();
+        }
+
+        line = line.trimmed();
+
+        if (line.isEmpty() || line.startsWith(':') || !line.startsWith("data:"))
+        {
+            continue;
+        }
+
+        const QByteArray eventData = line.mid(5).trimmed();
+
+        if (eventData.isEmpty() || (eventData == "[DONE]"))
+        {
+            continue;
+        }
+
+        QJsonParseError parseError;
+        const QJsonDocument document = QJsonDocument::fromJson(eventData, &parseError);
+
+        if ((parseError.error != QJsonParseError::NoError) || !document.isObject())
+        {
+            continue;
+        }
+
+        const QJsonArray choices = document.object().value(QStringLiteral("choices")).toArray();
+
+        if (choices.isEmpty())
+        {
+            continue;
+        }
+
+        const QJsonObject deltaObject = choices.first().toObject()
+                                          .value(QStringLiteral("delta")).toObject();
+        const QString delta = deltaObject.value(QStringLiteral("content")).toString();
+
+        if (!delta.isEmpty())
+        {
+            m_accumulatedTexts[requestId].append(delta);
+            emit ChatDelta(requestId, delta);
+        }
+    }
+}
+
 void LlmClient::OnReplyFinished(QNetworkReply *reply)
 {
     if (reply == nullptr)
@@ -306,14 +412,35 @@ void LlmClient::OnReplyFinished(QNetworkReply *reply)
     });
 
     const int requestId = reply->property("requestId").toInt();
+    const bool isStream = reply->property("stream").toBool();
     const int statusCode = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
-    const QByteArray responseData = reply->readAll();
+
+    QByteArray responseData;
+
+    if (isStream)
+    {
+        m_streamBuffers[requestId].append(reply->readAll());
+        ProcessStreamBuffer(requestId, true);
+    }
+    else
+    {
+        responseData = reply->readAll();
+    }
 
     if (requestId <= 0)
     {
         emit ChatFailed(-1, QStringLiteral("LLM reply does not contain request ID."), statusCode);
         return;
     }
+
+    const auto streamStateGuard = qScopeGuard([this, requestId, isStream]()
+    {
+        if (isStream)
+        {
+            m_streamBuffers.remove(requestId);
+            m_accumulatedTexts.remove(requestId);
+        }
+    });
 
     if (reply->error() != QNetworkReply::NoError)
     {
@@ -331,6 +458,22 @@ void LlmClient::OnReplyFinished(QNetworkReply *reply)
     }
 
     QString content;
+
+    if (isStream)
+    {
+        content = m_accumulatedTexts.value(requestId);
+
+        if (content.isEmpty())
+        {
+            emit ChatFailed(requestId, QStringLiteral("LLM stream content is empty."), statusCode);
+            return;
+        }
+
+        emit ChatStreamFinished(requestId, content);
+        emit ChatCompleted(requestId, content);
+        return;
+    }
+
     QString errorMessage;
 
     if (!ExtractAssistantContent(responseData, content, errorMessage))

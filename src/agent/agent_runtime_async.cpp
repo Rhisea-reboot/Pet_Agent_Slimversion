@@ -14,6 +14,39 @@ namespace vpet
 
 using namespace AgentRuntimeInternal;
 
+bool AgentRuntime::CancelUserRequest(int requestId)
+{
+    if ((m_llmClient == nullptr) || (requestId <= 0))
+    {
+        return false;
+    }
+
+    const bool cancelled = m_llmClient->CancelRequest(requestId);
+
+    if (m_streamingLlmRequests.contains(requestId))
+    {
+        m_sentenceSplitter.Reset(requestId);
+        m_streamingLlmRequests.remove(requestId);
+    }
+
+    if (cancelled)
+    {
+        m_cancelledUserRequests.insert(requestId);
+    }
+
+    return cancelled;
+}
+
+void AgentRuntime::CancelActiveStreaming()
+{
+    const QSet<int> streamingRequests = m_streamingLlmRequests;
+
+    for (const int requestId : streamingRequests)
+    {
+        CancelUserRequest(requestId);
+    }
+}
+
 bool AgentRuntime::SendUserInputToLlm(const QString &userInput, QString &errorMessage)
 {
     const QString normalizedUserInput = userInput.trimmed();
@@ -45,8 +78,32 @@ bool AgentRuntime::SendUserInputToLlm(const QString &userInput, QString &errorMe
     return true;
 }
 
+void AgentRuntime::OnLlmChatDelta(int requestId, const QString &delta)
+{
+    if (!m_streamingLlmRequests.contains(requestId))
+    {
+        return;
+    }
+
+    m_sentenceSplitter.AppendDelta(requestId, delta);
+}
+
+void AgentRuntime::OnLlmChatStreamFinished(int requestId, const QString &fullContent)
+{
+    if (!m_streamingLlmRequests.contains(requestId))
+    {
+        return;
+    }
+
+    (void)fullContent;
+    m_sentenceSplitter.FinalizeStream(requestId);
+    emit StreamResponseFinished(requestId);
+}
+
 void AgentRuntime::OnLlmChatCompleted(int requestId, const QString &content)
 {
+    m_streamingLlmRequests.remove(requestId);
+
     if (requestId <= 0)
     {
         emit LogMessage(QStringLiteral("Agent LLM response ignored because request ID is invalid."));
@@ -157,6 +214,38 @@ void AgentRuntime::OnLlmChatCompleted(int requestId, const QString &content)
 
 void AgentRuntime::OnLlmChatFailed(int requestId, const QString &message, int statusCode)
 {
+    if (m_cancelledUserRequests.remove(requestId))
+    {
+        emit LogMessage(QStringLiteral("Agent LLM request cancelled by user: %1").arg(requestId));
+
+        if (m_streamingLlmRequests.contains(requestId))
+        {
+            m_sentenceSplitter.Reset(requestId);
+            m_streamingLlmRequests.remove(requestId);
+        }
+
+        if (m_asyncBridge.TakeDirectRequest(requestId))
+        {
+            return;
+        }
+
+        const QString pendingKey = BuildPendingRequestKey(ASYNC_CLIENT_TEXT, requestId);
+
+        if (m_asyncBridge.ContainsPending(pendingKey))
+        {
+            ResetAsyncExecutionState(m_context);
+        }
+
+        return;
+    }
+
+    if (m_streamingLlmRequests.contains(requestId))
+    {
+        m_sentenceSplitter.FinalizeStream(requestId);
+        m_streamingLlmRequests.remove(requestId);
+        emit StreamResponseFinished(requestId);
+    }
+
     if (m_memoryConsolidator.HandleLlmFailed(requestId))
     {
         emit LogMessage(QStringLiteral("Memory consolidation request failed: %1")

@@ -1,5 +1,6 @@
 #include "vpet/pet_controller.h"
 #include "vpet/say_dialog.h"
+#include "vpet/stream_dialogue_coordinator.h"
 #include "vpet/tts_client.h"
 #include "vpet/tts_audio_player.h"
 
@@ -83,11 +84,13 @@ PetController::PetController(const QString &animationBasePath, QObject *parent)
     , m_frameSize(100, 100)
     , m_ttsClient(nullptr)
     , m_ttsAudioPlayer(nullptr)
+    , m_streamCoordinator(nullptr)
     , m_sayingTimeoutTimer(nullptr)
     , m_tempDir()
     , m_currentSayText()
     , m_currentSaySource(SaySource::IdleRandom)
     , m_synthesisCounter(0)
+    , m_pendingTtsRequestId(-1)
     , m_sayCooldownRemainingMs(0)
     , m_pendingSaySource(SaySource::IdleRandom)
     , m_discardPendingSynthesis(false)
@@ -159,6 +162,15 @@ bool PetController::Initialize()
     connect(m_ttsAudioPlayer, &TtsAudioPlayer::PlaybackFinished,
             this, &PetController::OnAudioPlaybackFinished);
 
+    m_streamCoordinator = new StreamDialogueCoordinator(m_ttsClient,
+                                                         m_ttsAudioPlayer,
+                                                         m_tempDir.path(),
+                                                         this);
+    connect(m_streamCoordinator, &StreamDialogueCoordinator::SentencePlaybackStarted,
+            this, &PetController::OnStreamSentencePlaybackStarted);
+    connect(m_streamCoordinator, &StreamDialogueCoordinator::DialogueFinished,
+            this, &PetController::OnStreamDialogueFinished);
+
     m_sayingTimeoutTimer = new QTimer(this);
     m_sayingTimeoutTimer->setSingleShot(true);
     m_sayingTimeoutTimer->setInterval(SAYING_TIMEOUT_MS);
@@ -178,6 +190,7 @@ bool PetController::Initialize()
 
 void PetController::OnMousePress(const QPoint &localPos)
 {
+    InterruptStreamDialogue();
     m_pendingHitType = m_hitRegion.GetHitType(localPos);
     m_dragStartGlobalPos = QCursor::pos();
     m_windowStartPos = m_position;
@@ -332,6 +345,55 @@ bool PetController::RequestSay(const QString &text, SaySource source)
     }
 
     return QueueSayText(normalizedText, source);
+}
+
+void PetController::EnqueueStreamSentence(const SentenceChunk &chunk)
+{
+    if (m_streamCoordinator == nullptr)
+    {
+        return;
+    }
+
+    m_streamCoordinator->EnqueueSentence(chunk);
+}
+
+void PetController::FinishStreamDialogue(int requestId)
+{
+    if (m_streamCoordinator != nullptr)
+    {
+        m_streamCoordinator->FinishStream(requestId);
+    }
+}
+
+void PetController::InterruptStreamDialogue()
+{
+    if ((m_streamCoordinator == nullptr) || !m_streamCoordinator->IsActive())
+    {
+        return;
+    }
+
+    m_streamCoordinator->Cancel();
+
+    if (m_sayingTimeoutTimer != nullptr)
+    {
+        m_sayingTimeoutTimer->stop();
+    }
+
+    if (m_stateMachine.GetCurrentState() == PET_STATE::SAYING)
+    {
+        m_stateMachine.RequestExitLoop();
+    }
+
+    m_bubbleMessage.Clear();
+    m_lastEmittedBubbleVisible = false;
+    m_lastEmittedBubbleText.clear();
+    emit BubbleChanged(false, QString());
+}
+
+bool PetController::IsStreamingRequest(int requestId) const
+{
+    return (m_streamCoordinator != nullptr)
+           && (m_streamCoordinator->ActiveRequestId() == requestId);
 }
 
 void PetController::OnUpdate()
@@ -598,6 +660,11 @@ bool PetController::StartSayText(const QString &text,
         return false;
     }
 
+    if ((m_streamCoordinator != nullptr) && m_streamCoordinator->IsActive())
+    {
+        return QueueSayText(normalizedText, source);
+    }
+
     QString sayAction = preferredAction.trimmed();
 
     if (sayAction.isEmpty())
@@ -643,8 +710,8 @@ bool PetController::StartSayText(const QString &text,
         m_synthesisCounter += 1;
 
         qDebug() << "[TTS]   synthesizing audio first";
-        m_ttsClient->Synthesize(m_currentSayText, m_pendingAudioPath);
-        return true;
+        m_pendingTtsRequestId = m_ttsClient->Synthesize(m_currentSayText, m_pendingAudioPath);
+        return m_pendingTtsRequestId > 0;
     }
 
     qDebug() << "[TTS]   TTS not configured, entering SAYING without audio";
@@ -785,11 +852,18 @@ void PetController::ClampPositionToScreen(QPoint &position) const
     }
 }
 
-void PetController::OnTtsSynthesisFinished(const QString &filePath)
+void PetController::OnTtsSynthesisFinished(int requestId, const QString &filePath)
 {
+    if (requestId != m_pendingTtsRequestId)
+    {
+        return;
+    }
+
+    m_pendingTtsRequestId = -1;
     qDebug() << "[TTS] OnTtsSynthesisFinished, file available:" << !filePath.isEmpty();
 
-    if (m_discardPendingSynthesis)
+    if (m_discardPendingSynthesis
+        || ((m_streamCoordinator != nullptr) && m_streamCoordinator->IsActive()))
     {
         qDebug() << "[TTS]   discarding obsolete synthesized audio.";
 
@@ -903,8 +977,62 @@ void PetController::OnTtsSynthesisFinished(const QString &filePath)
     }
 }
 
+void PetController::OnStreamSentencePlaybackStarted(const SentenceChunk &chunk)
+{
+    QString actionName;
+
+    if (m_stateMachine.GetCurrentState() != PET_STATE::SAYING)
+    {
+        actionName = m_stateMachine.SelectRandomSayAction();
+
+        if (!actionName.isEmpty())
+        {
+            m_stateMachine.EnterSayState(actionName);
+            emit SayStarted(actionName);
+        }
+    }
+
+    m_currentSayText = chunk.text;
+    m_currentSaySource = SaySource::UserResponse;
+    m_bubbleMessage.Show(chunk.text, SAY_BUBBLE_DURATION_MS);
+    m_lastEmittedBubbleVisible = true;
+    m_lastEmittedBubbleText = chunk.text;
+    emit BubbleChanged(true, chunk.text);
+    emit SayTextReady(chunk.text);
+
+    if (m_sayingTimeoutTimer != nullptr)
+    {
+        m_sayingTimeoutTimer->start();
+    }
+}
+
+void PetController::OnStreamDialogueFinished(int requestId)
+{
+    (void)requestId;
+
+    if (m_sayingTimeoutTimer != nullptr)
+    {
+        m_sayingTimeoutTimer->stop();
+    }
+
+    if (m_stateMachine.GetCurrentState() == PET_STATE::SAYING)
+    {
+        m_stateMachine.RequestExitLoop();
+    }
+
+    m_sayCooldownRemainingMs = SAY_TRIGGER_COOLDOWN_MS;
+    m_currentSayText.clear();
+    m_currentSaySource = SaySource::IdleRandom;
+    TryStartQueuedSay();
+}
+
 void PetController::OnAudioPlaybackFinished()
 {
+    if ((m_streamCoordinator != nullptr) && m_streamCoordinator->IsActive())
+    {
+        return;
+    }
+
     qDebug() << "[TTS] OnAudioPlaybackFinished - audio playback done";
 
     if (m_sayingTimeoutTimer != nullptr)

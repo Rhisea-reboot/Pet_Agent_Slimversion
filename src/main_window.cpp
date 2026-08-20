@@ -220,6 +220,10 @@ void MainWindow::SetAgentRuntime(AgentRuntime *agentRuntime)
             this, &MainWindow::OnAgentLlmResponseReceived);
     connect(m_agentRuntime, &AgentRuntime::AgentOutputReady,
             this, &MainWindow::OnAgentOutputReady);
+    connect(m_agentRuntime, &AgentRuntime::StreamSentenceReady,
+            this, &MainWindow::OnStreamSentenceReady);
+    connect(m_agentRuntime, &AgentRuntime::StreamResponseFinished,
+            this, &MainWindow::OnStreamResponseFinished);
     connect(m_agentRuntime, &AgentRuntime::LlmRequestFailed,
             this, &MainWindow::OnAgentLlmRequestFailed);
     connect(m_agentRuntime, &AgentRuntime::AgentRequestFailed,
@@ -240,6 +244,13 @@ void MainWindow::mousePressEvent(QMouseEvent *event)
         QWidget::mousePressEvent(event);
         return;
     }
+
+    if (m_agentRuntime != nullptr)
+    {
+        m_agentRuntime->CancelActiveStreaming();
+    }
+
+    m_streamingRequests.clear();
 
     if (m_controller != nullptr)
     {
@@ -624,6 +635,25 @@ void MainWindow::OnAgentLlmResponseReceived(int requestId, const QString &conten
              << "characters:" << content.size();
 }
 
+void MainWindow::OnStreamSentenceReady(const SentenceChunk &chunk)
+{
+    if (m_controller == nullptr)
+    {
+        return;
+    }
+
+    m_streamingRequests.insert(chunk.requestId);
+    m_controller->EnqueueStreamSentence(chunk);
+}
+
+void MainWindow::OnStreamResponseFinished(int requestId)
+{
+    if (m_controller != nullptr)
+    {
+        m_controller->FinishStreamDialogue(requestId);
+    }
+}
+
 void MainWindow::OnAgentOutputReady(int requestId, const QString &content, const QString &source)
 {
     if (requestId <= 0)
@@ -637,6 +667,12 @@ void MainWindow::OnAgentOutputReady(int requestId, const QString &content, const
     if (normalizedContent.isEmpty())
     {
         qWarning() << "[AgentOutput] Empty final output for request:" << requestId;
+        return;
+    }
+
+    if (m_streamingRequests.contains(requestId))
+    {
+        m_streamingRequests.remove(requestId);
         return;
     }
 
@@ -1089,6 +1125,18 @@ void MainWindow::SubmitTextToAgent(const QString &text)
     {
         qWarning() << "[Agent] Voice text is empty.";
         return;
+    }
+
+    if (m_agentRuntime != nullptr)
+    {
+        m_agentRuntime->CancelActiveStreaming();
+    }
+
+    m_streamingRequests.clear();
+
+    if (m_controller != nullptr)
+    {
+        m_controller->InterruptStreamDialogue();
     }
 
     if (m_agentRuntime == nullptr)

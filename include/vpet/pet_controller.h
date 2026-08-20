@@ -18,6 +18,8 @@ namespace vpet
 
 class TtsClient;
 class TtsAudioPlayer;
+class StreamDialogueCoordinator;
+struct SentenceChunk;
 
 /**
  * @brief 说话请求来源
@@ -158,6 +160,18 @@ public:
      */
     bool RequestSay(const QString &text, SaySource source);
 
+    /** @brief 将流式 LLM 生成的一句加入合成与播放队列。 */
+    void EnqueueStreamSentence(const SentenceChunk &chunk);
+
+    /** @brief 标记流式 LLM 已结束，队列播完后退出说话状态。 */
+    void FinishStreamDialogue(int requestId);
+
+    /** @brief 立即中断当前流式对话、合成和播放。 */
+    void InterruptStreamDialogue();
+
+    /** @brief 判断指定请求是否已进入流式播放链路。 */
+    bool IsStreamingRequest(int requestId) const;
+
 signals:
     /**
      * @brief 当前帧变化信号
@@ -211,9 +225,16 @@ private slots:
 
     /**
      * @brief TTS 合成完成后的处理槽
+     * @param[in] requestId 合成请求 ID
      * @param[in] filePath 合成后的音频文件路径
      */
-    void OnTtsSynthesisFinished(const QString &filePath);
+    void OnTtsSynthesisFinished(int requestId, const QString &filePath);
+
+    /** @brief 流式句子开始播放时同步动画与气泡。 */
+    void OnStreamSentencePlaybackStarted(const SentenceChunk &chunk);
+
+    /** @brief 流式句子队列全部播放完成。 */
+    void OnStreamDialogueFinished(int requestId);
 
     /**
      * @brief 音频播放完成后的处理槽
@@ -310,11 +331,13 @@ private:
     QSize m_frameSize;                          ///< 当前帧尺寸
     TtsClient *m_ttsClient;                     ///< TTS 客户端
     TtsAudioPlayer *m_ttsAudioPlayer;           ///< TTS 音频播放器
+    StreamDialogueCoordinator *m_streamCoordinator; ///< 流式分句合成与播放协调器
     QTimer *m_sayingTimeoutTimer;               ///< SAYING 状态超时兜底定时器
     QTemporaryDir m_tempDir;                    ///< 临时目录，存放合成的音频文件
     QString m_currentSayText;                   ///< 当前 Say 台词文本
     SaySource m_currentSaySource;               ///< 当前 Say 来源
     int m_synthesisCounter;                     ///< TTS 合成序号，用于生成唯一文件名
+    int m_pendingTtsRequestId;                   ///< 传统单句合成请求 ID
     int m_sayCooldownRemainingMs;               ///< Say 触发冷却剩余时间
     QString m_pendingAudioPath;                 ///< 已合成待播放的音频文件路径
     QString m_pendingSayAction;                 ///< 待进入的 Say 动作名

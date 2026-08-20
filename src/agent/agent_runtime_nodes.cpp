@@ -370,6 +370,19 @@ bool AgentRuntime::ParseLlmRequestOptions(const _tagAgentDagNode &node,
         options.presencePenalty = presencePenalty;
     }
 
+    const QJsonValue streamValue = configObject.value(QStringLiteral("stream"));
+
+    if (!streamValue.isUndefined())
+    {
+        if (!streamValue.isBool())
+        {
+            errorMessage = QStringLiteral("Agent LLM node stream is not a boolean.");
+            return false;
+        }
+
+        options.stream = streamValue.toBool();
+    }
+
     const QJsonValue maxTokensValue = configObject.value(QStringLiteral("max_tokens"));
 
     if (maxTokensValue.isUndefined() == false)
@@ -436,6 +449,11 @@ bool AgentRuntime::ExecuteLlmChatNode(const _tagAgentDagNode &node,
     }
 
     const int requestId = m_llmClient->SendPrompt(promptText, options);
+
+    if (requestId > 0 && options.stream)
+    {
+        m_streamingLlmRequests.insert(requestId);
+    }
 
     if (requestId <= 0)
     {

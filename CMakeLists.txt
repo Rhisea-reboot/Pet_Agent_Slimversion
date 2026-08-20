@@ -62,6 +62,8 @@ set(VPET_SOURCES
     src/say_dialog.cpp
     src/tts_client.cpp
     src/tts_audio_player.cpp
+    src/stream_sentence_splitter.cpp
+    src/stream_dialogue_coordinator.cpp
     src/tts_server_manager.cpp
     src/chat_bubble_window.cpp
     src/splash_window.cpp
@@ -114,6 +116,8 @@ set(VPET_HEADERS
     include/vpet/say_dialog.h
     include/vpet/tts_client.h
     include/vpet/tts_audio_player.h
+    include/vpet/stream_sentence_splitter.h
+    include/vpet/stream_dialogue_coordinator.h
     include/vpet/tts_server_manager.h
     include/vpet/chat_bubble_window.h
     include/vpet/splash_window.h
@@ -202,6 +206,27 @@ if(BUILD_TESTING)
 
     add_test(NAME agent_dag_graph_tests COMMAND agent_dag_graph_tests)
 
+    add_executable(stream_sentence_splitter_tests
+        tests/stream_sentence_splitter_test.cpp
+        src/stream_sentence_splitter.cpp
+        include/vpet/stream_sentence_splitter.h
+    )
+
+    target_include_directories(stream_sentence_splitter_tests
+        PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/include
+    )
+
+    target_link_libraries(stream_sentence_splitter_tests
+        PRIVATE
+            Qt6::Core
+            Qt6::Test
+    )
+
+    set_property(TARGET stream_sentence_splitter_tests PROPERTY AUTOMOC_COMPILER_PREDEFINES OFF)
+
+    add_test(NAME stream_sentence_splitter_tests COMMAND stream_sentence_splitter_tests)
+
     add_executable(agent_runtime_scheduler_tests
         tests/agent_runtime_scheduler_test.cpp
         src/agent/agent_context.cpp
@@ -232,6 +257,8 @@ if(BUILD_TESTING)
         src/web/web_research_engine.cpp
         src/llm/llm_client.cpp
         src/llm/vision_llm_client.cpp
+        src/stream_sentence_splitter.cpp
+        include/vpet/stream_sentence_splitter.h
         include/vpet/agent/agent_context.h
         include/vpet/agent/agent_context_keys.h
         include/vpet/agent/agent_dag_graph.h
@@ -311,6 +338,8 @@ if(BUILD_TESTING)
         src/web/web_research_engine.cpp
         src/llm/llm_client.cpp
         src/llm/vision_llm_client.cpp
+        src/stream_sentence_splitter.cpp
+        include/vpet/stream_sentence_splitter.h
         include/vpet/agent/agent_context.h
         include/vpet/agent/agent_context_keys.h
         include/vpet/agent/agent_dag_graph.h
@@ -530,6 +559,8 @@ if(BUILD_TESTING)
         src/web/web_research_engine.cpp
         src/llm/llm_client.cpp
         src/llm/vision_llm_client.cpp
+        src/stream_sentence_splitter.cpp
+        include/vpet/stream_sentence_splitter.h
         include/vpet/agent/agent_context.h
         include/vpet/agent/agent_context_keys.h
         include/vpet/agent/agent_dag_graph.h
