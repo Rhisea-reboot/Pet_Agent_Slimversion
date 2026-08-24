@@ -1,0 +1,71 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows-build-test:
+    name: Windows · Qt 6.9.2 MinGW · build + CTest
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Qt 6.9.2 mingw_64 + 配套 MinGW 工具链；qtmultimedia 不在默认模块集内，需显式安装。
+      - name: Install Qt 6.9.2 (MinGW)
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.9.2'
+          arch: 'win64_mingw'
+          modules: 'qtmultimedia'
+          tools: 'tools_mingw'
+          cache: true
+
+      # onnxruntime.dll 不入库（见 .gitignore vendor/onnxruntime/bin/），
+      # CI 在配置前下载与本地一致的 1.28.0，保证 embedding 测试走真实路径。
+      - name: Deploy onnxruntime runtime (v1.28.0)
+        shell: pwsh
+        run: powershell -ExecutionPolicy Bypass -File scripts\download_onnxruntime.ps1 -Version 1.28.0
+
+      - name: Configure (Ninja + MinGW)
+        shell: pwsh
+        run: |
+          $qtToolsRoot = Split-Path -Parent (Split-Path -Parent $env:Qt6_DIR)
+          $gcc = Get-ChildItem -Path $qtToolsRoot -Filter 'g++.exe' -Recurse -ErrorAction SilentlyContinue |
+                 Where-Object { $_.FullName -match 'mingw.*_64' } |
+                 Select-Object -First 1 -ExpandProperty FullName
+          if (-not $gcc) { throw "未在 $qtToolsRoot 下找到 64 位 MinGW g++" }
+          $gccDir = Split-Path -Parent $gcc
+          # 为后续步骤的测试子进程补齐 MinGW 运行时与 Qt DLL 路径
+          $gccDir | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          "$env:Qt6_DIR\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          cmake -S . -B build -G Ninja "-DCMAKE_PREFIX_PATH=$env:Qt6_DIR" `
+            "-DCMAKE_C_COMPILER=$gccDir\gcc.exe" "-DCMAKE_CXX_COMPILER=$gcc"
+
+      - name: Build (Debug)
+        run: cmake --build build --config Debug
+
+      - name: Test (CTest)
+        shell: pwsh
+        run: ctest --test-dir build --output-on-failure -C Debug
+
+      # 行尾空白门禁：vendor 前端资源保持上游原样，排除在外；
+      # 使用 -P (PCRE)，避免 Windows 版 git 在 -E/-basic 下对 $ 锚点的误报。
+      - name: Whitespace gate (no trailing whitespace)
+        shell: pwsh
+        run: |
+          $hits = git grep -n -I -P '[ \t]+$' -- '*.cpp' '*.h' '*.md' '*.ps1' '*.json' '*.cmake' '*.qrc' '*.js' '*.html' '*.css' '*.yml' '*.yaml' 'CMakeLists.txt' ':(exclude)resources/dag_editor/vendor' 2>$null
+          if ($LASTEXITCODE -eq 0) {
+            Write-Host $hits
+            Write-Host '::error::发现行尾空白（trailing whitespace），请清理后重试。'
+            exit 1
+          }
+          Write-Host '通过：跟踪文本文件无行尾空白。'

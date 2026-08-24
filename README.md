@@ -1,5 +1,7 @@
 # VPet / Pet Agent
 
+![CI](https://github.com/Rhisea-reboot/Pet_Agent_Slimversion/actions/workflows/ci-windows.yml/badge.svg)
+
 基于 Qt 6 的 Windows 桌面宠物，支持动画交互、语音输入、屏幕视觉感知、DAG 编排的 LLM Agent，以及 TTS 语音播报。
 
 目标：从“会动的桌宠”升级为“能看屏幕、能听你说话、能主动搭话”的陪伴式 Agent。
