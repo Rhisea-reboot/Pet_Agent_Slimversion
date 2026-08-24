@@ -26,6 +26,9 @@ bool AgentRuntime::EnqueueInvocation(const AgentContext &context)
 
 bool AgentRuntime::StartNextQueuedInvocation(QString &errorMessage)
 {
+    // 队列非空说明上一轮已收尾：先应用挂起的新图，保证“新一轮用新图”。
+    TryApplyPendingDagReload();
+
     if (m_graphExecutor.IsActive() || m_invocationQueue.IsEmpty())
     {
         return true;
@@ -241,6 +244,11 @@ AgentGraphExecutor::_tagCallbacks AgentRuntime::BuildGraphCallbacks()
                 }
             });
         }
+        else
+        {
+            // 空闲收尾点：忙碌期挂起的图快照在此自动应用。
+            TryApplyPendingDagReload();
+        }
 
         qDebug() << "[Agent] Ready queue execution finished.";
     };
@@ -278,13 +286,18 @@ bool AgentRuntime::ResumePendingNode(const QString &pendingKey,
         return false;
     }
 
-    return m_graphExecutor.ResumePendingNode(pendingRequest.nodeId,
-                                             pendingRequest.invocationId,
-                                             context,
-                                             m_context,
-                                             m_sessionContext,
-                                             BuildGraphCallbacks(),
-                                             errorMessage);
+    const bool resumed = m_graphExecutor.ResumePendingNode(pendingRequest.nodeId,
+                                                           pendingRequest.invocationId,
+                                                           context,
+                                                           m_context,
+                                                           m_sessionContext,
+                                                           BuildGraphCallbacks(),
+                                                           errorMessage);
+
+    // 挂起节点恢复是 invocation 的收尾点之一：在此尝试应用挂起的新图。
+    TryApplyPendingDagReload();
+
+    return resumed;
 }
 
 void AgentRuntime::HandlePendingRequestTimeout(const QString &pendingKey,
@@ -306,6 +319,9 @@ void AgentRuntime::HandlePendingRequestTimeout(const QString &pendingKey,
     const QString message = QStringLiteral("Agent async request timed out.");
     emit LogMessage(QStringLiteral("%1 Request ID: %2").arg(message).arg(requestId));
     EmitAgentRequestFailed(requestId, message, 0, failureSource);
+
+    // 超时终止也是 invocation 收尾点：尝试应用忙碌期挂起的新图。
+    TryApplyPendingDagReload();
 }
 
 bool AgentRuntime::PrepareTextInputContext(AgentContext &context, QString &errorMessage)

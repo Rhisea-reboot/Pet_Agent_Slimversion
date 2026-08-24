@@ -1,0 +1,215 @@
+/* DAG 编辑器界面样式（配合 litegraph.css 使用） */
+
+:root {
+    --bg-dark: #1e1f24;
+    --panel-bg: #25262c;
+    --panel-border: #35363e;
+    --text-main: #d8d9dd;
+    --text-dim: #8a8b92;
+    --accent: #4aa3ff;
+    --ok: #4caf50;
+    --warn: #ffb300;
+    --error: #ef5350;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+    margin: 0;
+    padding: 0;
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    background: var(--bg-dark);
+    color: var(--text-main);
+    font-family: "Microsoft YaHei", "Segoe UI", sans-serif;
+    font-size: 13px;
+}
+
+.hidden { display: none !important; }
+
+button {
+    background: #33353d;
+    color: var(--text-main);
+    border: 1px solid var(--panel-border);
+    border-radius: 4px;
+    padding: 5px 12px;
+    cursor: pointer;
+    font-size: 13px;
+}
+
+button:hover { background: #3d3f49; border-color: var(--accent); }
+button:disabled { opacity: 0.45; cursor: default; }
+
+input, select, textarea {
+    background: #1a1b20;
+    color: var(--text-main);
+    border: 1px solid var(--panel-border);
+    border-radius: 4px;
+    padding: 4px 8px;
+    font-size: 13px;
+    width: 100%;
+}
+
+textarea { resize: vertical; min-height: 64px; }
+
+/* ---- 顶栏 ---- */
+#toolbar {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 8px 14px;
+    background: var(--panel-bg);
+    border-bottom: 1px solid var(--panel-border);
+    height: 46px;
+}
+
+.tool-group { display: flex; gap: 6px; }
+
+#save-status { font-weight: 600; }
+#save-status.status-idle { color: var(--text-dim); }
+#save-status.status-saving { color: var(--warn); }
+#save-status.status-ok { color: var(--ok); }
+#save-status.status-error { color: var(--error); }
+
+#reload-status { color: var(--text-dim); }
+
+/* ---- 外部修改横幅 ---- */
+#external-banner {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 14px;
+    background: #5b4a17;
+    border-bottom: 1px solid var(--warn);
+    color: #ffe9b3;
+}
+
+/* ---- 三栏布局 ---- */
+#layout {
+    display: flex;
+    height: calc(100% - 46px - 96px); /* 顶栏与底栏 */
+}
+
+#library {
+    width: 230px;
+    background: var(--panel-bg);
+    border-right: 1px solid var(--panel-border);
+    display: flex;
+    flex-direction: column;
+    padding: 10px;
+    gap: 8px;
+    overflow-y: auto;
+}
+
+#library-search { flex: none; }
+
+.library-category {
+    font-weight: 600;
+    color: var(--accent);
+    margin-top: 8px;
+    font-size: 12px;
+}
+
+.library-item {
+    padding: 5px 8px;
+    margin: 2px 0;
+    border-left: 3px solid var(--node-color, #666);
+    background: #2b2c33;
+    border-radius: 3px;
+    cursor: grab;
+    user-select: none;
+}
+
+.library-item:hover { background: #363842; }
+
+.hint { color: var(--text-dim); font-size: 12px; }
+
+#canvas-host { flex: 1; position: relative; }
+#editor-canvas { width: 100%; height: 100%; display: block; outline: none; }
+
+#property-panel {
+    width: 300px;
+    background: var(--panel-bg);
+    border-left: 1px solid var(--panel-border);
+    overflow-y: auto;
+    padding: 12px;
+}
+
+#property-panel h2 {
+    margin: 0 0 10px 0;
+    font-size: 15px;
+    color: var(--accent);
+    border-bottom: 1px solid var(--panel-border);
+    padding-bottom: 8px;
+}
+
+.property-row { margin-bottom: 10px; }
+.property-row label { display: block; color: var(--text-dim); margin-bottom: 3px; }
+.property-tooltip { color: var(--text-dim); font-size: 11px; margin-top: 2px; }
+
+.property-section-title {
+    font-weight: 600;
+    color: var(--text-dim);
+    margin: 14px 0 6px 0;
+    font-size: 12px;
+    text-transform: uppercase;
+}
+
+.context-key-chip {
+    display: inline-block;
+    background: #30323b;
+    border-radius: 3px;
+    padding: 2px 6px;
+    margin: 2px;
+    font-family: Consolas, monospace;
+    font-size: 11px;
+}
+
+/* ---- 底部问题栏 ---- */
+#issue-bar {
+    height: 96px;
+    background: var(--panel-bg);
+    border-top: 1px solid var(--panel-border);
+    overflow-y: auto;
+    padding: 6px 14px;
+}
+
+#issue-summary.has-errors { color: var(--error); font-weight: 600; }
+#issue-summary.has-warnings { color: var(--warn); font-weight: 600; }
+#issue-summary.clean { color: var(--ok); }
+
+#issue-list { list-style: none; margin: 6px 0 0 0; padding: 0; }
+#issue-list li { padding: 2px 0; font-size: 12px; }
+#issue-list li.error { color: var(--error); }
+#issue-list li.warning { color: var(--warn); }
+
+/* ---- 模态框 ---- */
+#modal-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.55);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 100;
+}
+
+#modal {
+    background: var(--panel-bg);
+    border: 1px solid var(--panel-border);
+    border-radius: 6px;
+    padding: 20px 24px;
+    max-width: 460px;
+    box-shadow: 0 8px 30px rgba(0, 0, 0, 0.55);
+}
+
+#modal h3 { margin: 0 0 8px 0; }
+#modal p { color: var(--text-dim); white-space: pre-wrap; }
+
+#modal-buttons {
+    display: flex;
+    gap: 8px;
+    justify-content: flex-end;
+    margin-top: 16px;
+}

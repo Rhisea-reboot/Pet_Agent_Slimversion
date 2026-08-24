@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>DAG 编辑器</title>
+<link rel="stylesheet" href="/vendor/litegraph.css">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header id="toolbar">
+    <div class="tool-group">
+        <button id="btn-save" title="保存并触发热重载（Ctrl+S）">💾 保存</button>
+        <button id="btn-undo" title="撤销（Ctrl+Z）">↩ 撤销</button>
+        <button id="btn-redo" title="重做（Ctrl+Y）">↪ 重做</button>
+    </div>
+    <div class="tool-group">
+        <button id="btn-fit" title="缩放适配全部节点">⤢ 适配视图</button>
+        <button id="btn-export" title="导出画布为 PNG">🖼 导出 PNG</button>
+    </div>
+    <div id="save-status" class="status-idle">就绪</div>
+    <div id="reload-status"></div>
+</header>
+
+<div id="external-banner" class="hidden">
+    <span id="external-banner-text">配置文件已被外部修改。</span>
+    <button id="btn-adopt-external">重新加载磁盘内容</button>
+    <button id="btn-force-overwrite">用我的版本覆盖</button>
+</div>
+
+<main id="layout">
+    <aside id="library">
+        <input id="library-search" type="search" placeholder="搜索节点…">
+        <div id="library-tree"></div>
+        <p class="hint">点击或拖拽到画布添加节点；双击画布也可搜索。</p>
+    </aside>
+
+    <section id="canvas-host">
+        <canvas id="editor-canvas"></canvas>
+    </section>
+
+    <aside id="property-panel">
+        <h2>属性</h2>
+        <div id="property-body">
+            <p class="hint">选中一个节点以编辑其 config。</p>
+        </div>
+    </aside>
+</main>
+
+<footer id="issue-bar">
+    <span id="issue-summary">校验：未运行</span>
+    <ul id="issue-list"></ul>
+</footer>
+
+<div id="modal-backdrop" class="hidden">
+    <div id="modal">
+        <h3 id="modal-title"></h3>
+        <p id="modal-message"></p>
+        <div id="modal-buttons"></div>
+    </div>
+</div>
+
+<script>
+// 全局错误可见化：任何脚本/异步异常都反映到顶栏状态区。
+(function () {
+    function show(message) {
+        var element = document.getElementById('save-status');
+        if (!element) return;
+        element.textContent = message;
+        element.className = 'status-error';
+        console.error(message);
+    }
+    window.addEventListener('error', function (e) {
+        show('脚本错误: ' + (e.message || e.type)
+            + (e.filename ? ' @ ' + e.filename.split('/').pop() : ''));
+    });
+    window.addEventListener('unhandledrejection', function (e) {
+        show('异步错误: ' + (e.reason && e.reason.message ? e.reason.message : e.reason));
+    });
+})();
+</script>
+<script src="/vendor/litegraph.min.js"></script>
+<script src="/api.js"></script>
+<script src="/graph_adapter.js"></script>
+<script src="/widgets.js"></script>
+<script src="/panels/library.js"></script>
+<script src="/panels/property.js"></script>
+<script src="/app.js"></script>
+</body>
+</html>

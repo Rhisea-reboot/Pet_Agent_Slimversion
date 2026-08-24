@@ -22,6 +22,9 @@
 #include <QVector>
 
 #include <functional>
+#include <memory>
+
+class QFileSystemWatcher;
 
 namespace vpet
 {
@@ -270,6 +273,52 @@ public:
     bool HasPendingAsyncRequest() const;
 
     /**
+     * @brief 热重载结果
+     */
+    enum class DagReloadOutcome
+    {
+        Applied,  ///< 已立即换图，下一轮 invocation 使用新图
+        Deferred, ///< 运行中忙碌，快照已挂起等待空闲自动应用
+        Failed    ///< 加载或校验失败，当前图保持不变
+    };
+
+    /**
+     * @brief 从磁盘重新加载 DAG 配置并按空闲门控换图
+     *
+     * 校验失败不触碰当前图；忙碌时挂起快照，在 invocation 收尾点自动应用。
+     *
+     * @param[in] configPath DAG 配置文件路径
+     * @param[out] outcome 重载结果
+     * @param[out] errorMessage 失败描述
+     * @return outcome 为 Applied 或 Deferred 时返回 true
+     */
+    bool RequestDagReload(const QString &configPath,
+                          DagReloadOutcome &outcome,
+                          QString &errorMessage);
+
+    /**
+     * @brief 获取当前监听的 DAG 配置路径
+     * @return 配置路径；尚未加载时为空
+     */
+    QString GetDagConfigPath() const;
+
+    /**
+     * @brief 运行时忙碌状态的只读快照（编辑器/监控展示用）
+     */
+    struct _tagRuntimeStatus
+    {
+        bool invocationActive;    ///< 是否有进行中的 invocation
+        bool pendingAsync;        ///< 是否有挂起异步请求
+        bool queuedInvocations;   ///< 是否有排队中的触发
+    };
+
+    /**
+     * @brief 获取运行时忙碌状态快照
+     * @return 状态快照
+     */
+    _tagRuntimeStatus GetRuntimeStatus() const;
+
+    /**
      * @brief 加载配置并立即执行 Agent DAG
      * @param[in] configPath Agent DAG 配置文件路径
      * @param[out] errorMessage 错误描述
@@ -357,6 +406,20 @@ signals:
                             int statusCode,
                             const QString &source);
 
+    /**
+     * @brief DAG 图已重载信号
+     * @param[in] configPath 配置路径
+     * @param[in] applied true=立即生效；false=忙碌期挂起，稍后自动应用
+     */
+    void DagGraphReloaded(const QString &configPath, bool applied);
+
+    /**
+     * @brief DAG 重载失败信号
+     * @param[in] configPath 配置路径
+     * @param[in] error 失败原因
+     */
+    void DagGraphReloadFailed(const QString &configPath, const QString &error);
+
 private slots:
     /**
      * @brief 处理文本 LLM 回复完成
@@ -398,6 +461,9 @@ private slots:
     void OnWebResearchCompleted(const _tagWebResearchResponse &response);
     /** @brief 处理联网研究失败。 @param[in] researchId 研究 ID。 @param[in] message 错误描述。 @param[in] statusCode HTTP 状态码。 */
     void OnWebResearchFailed(int researchId, const QString &message, int statusCode);
+
+    /** @brief 处理 DAG 配置文件的外部修改（防抖后校验并自动热重载）。 */
+    void OnDagConfigFileChanged();
 
 private:
     /**
@@ -445,6 +511,17 @@ private:
      * @return 不持有运行时反向引用的单次调用回调集合
      */
     AgentGraphExecutor::_tagCallbacks BuildGraphCallbacks();
+
+    /**
+     * @brief 监听 DAG 配置文件与所在目录的外部修改
+     * @param[in] configPath DAG 配置文件路径
+     */
+    void SetupDagConfigWatcher(const QString &configPath);
+
+    /**
+     * @brief 尝试在空闲时应用挂起的图快照；无挂起快照时为空操作
+     */
+    void TryApplyPendingDagReload();
 
     /**
      * @brief 根据异步客户端来源和请求 ID 构造 pending 表键
@@ -707,6 +784,11 @@ private:
     QStringList m_latestSurfacedMemoryIds; ///< 最近一次回答实际注入的记忆 ID
     AgentNodeRegistry m_nodeRegistry;     ///< 节点注册与别名执行组件
     AgentGraphExecutor m_graphExecutor;   ///< DAG 与单轮调度组件
+    QFileSystemWatcher *m_dagConfigWatcher; ///< DAG 配置文件监视器（懒创建）
+    QString m_dagConfigPath;              ///< 当前加载的 DAG 配置路径
+    QByteArray m_dagConfigFingerprint;    ///< 最近一次读取的配置内容指纹
+    std::shared_ptr<const AgentDagGraph> m_pendingGraphSnapshot; ///< 待空闲应用的图快照
+    bool m_dagConfigReloadPending;        ///< 外部修改防抖定时器是否在途
     AgentAsyncBridge m_asyncBridge;       ///< 异步请求关联组件
     InvocationQueuePolicy m_invocationQueue; ///< 跨轮触发排队策略
     QString m_lastPerceptionFrameHash;     ///< 最近已接受视觉帧内容指纹

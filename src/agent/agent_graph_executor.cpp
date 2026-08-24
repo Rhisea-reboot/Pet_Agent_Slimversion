@@ -10,7 +10,7 @@ namespace vpet
 {
 
 AgentGraphExecutor::AgentGraphExecutor()
-    : m_dagGraph()
+    : m_graphSnapshot(std::make_shared<AgentDagGraph>())
     , m_executionOrder()
     , m_invocationState()
     , m_nextInvocationId(0)
@@ -26,19 +26,85 @@ bool AgentGraphExecutor::Load(const QString &configPath, QString &errorMessage)
         return false;
     }
 
-    if (!m_dagGraph.LoadFromJsonFile(configPath, errorMessage))
+    // 先在局部构建快照与拓扑序，全部成功后才提交成员：失败时旧图保持可用。
+    auto snapshot = std::make_shared<AgentDagGraph>();
+    QVector<QString> executionOrder;
+
+    if (!snapshot->LoadFromJsonFile(configPath, errorMessage))
     {
-        m_executionOrder.clear();
         return false;
     }
 
-    if (!m_dagGraph.TopologicalSort(m_executionOrder, errorMessage))
+    if (!snapshot->TopologicalSort(executionOrder, errorMessage))
     {
-        m_executionOrder.clear();
         return false;
     }
 
+    m_graphSnapshot = std::move(snapshot);
+    m_executionOrder = executionOrder;
     return true;
+}
+
+bool AgentGraphExecutor::BuildSnapshotFromFile(const QString &configPath,
+                                               std::shared_ptr<const AgentDagGraph> &snapshotOut,
+                                               QVector<QString> &executionOrderOut,
+                                               QString &errorMessage)
+{
+    snapshotOut.reset();
+    executionOrderOut.clear();
+
+    if (configPath.trimmed().isEmpty())
+    {
+        errorMessage = QStringLiteral("Agent runtime config path is empty.");
+        return false;
+    }
+
+    auto snapshot = std::make_shared<AgentDagGraph>();
+
+    if (!snapshot->LoadFromJsonFile(configPath, errorMessage))
+    {
+        return false;
+    }
+
+    if (!snapshot->TopologicalSort(executionOrderOut, errorMessage))
+    {
+        return false;
+    }
+
+    snapshotOut = std::move(snapshot);
+    return true;
+}
+
+bool AgentGraphExecutor::IsIdle(bool hasPendingAsync) const
+{
+    return !m_invocationState.isActive && !hasPendingAsync;
+}
+
+AgentGraphExecutor::ReplaceGraphResult
+AgentGraphExecutor::ReplaceGraphIfIdle(std::shared_ptr<const AgentDagGraph> snapshot,
+                                       bool hasPendingAsync)
+{
+    if (!snapshot || snapshot->IsEmpty())
+    {
+        return ReplaceGraphResult::RejectedInvalid;
+    }
+
+    if (!IsIdle(hasPendingAsync))
+    {
+        return ReplaceGraphResult::DeferredBusy;
+    }
+
+    QVector<QString> executionOrder;
+    QString errorMessage;
+
+    if (!snapshot->TopologicalSort(executionOrder, errorMessage))
+    {
+        return ReplaceGraphResult::RejectedInvalid;
+    }
+
+    m_graphSnapshot = std::move(snapshot);
+    m_executionOrder = executionOrder;
+    return ReplaceGraphResult::Applied;
 }
 
 QVector<QString> AgentGraphExecutor::GetExecutionOrder() const
@@ -79,7 +145,7 @@ bool AgentGraphExecutor::BeginInvocation(const AgentContext &context,
         return false;
     }
 
-    const QVector<QString> allSourceNodes = m_dagGraph.GetSourceNodes();
+    const QVector<QString> allSourceNodes = m_graphSnapshot->GetSourceNodes();
 
     if (allSourceNodes.isEmpty())
     {
@@ -88,8 +154,8 @@ bool AgentGraphExecutor::BeginInvocation(const AgentContext &context,
     }
 
     ClearInvocationState();
-    m_invocationState.remainingInDegree = m_dagGraph.GetInDegreeMap();
-    const QVector<QString> nodeNames = m_dagGraph.GetNodeNames();
+    m_invocationState.remainingInDegree = m_graphSnapshot->GetInDegreeMap();
+    const QVector<QString> nodeNames = m_graphSnapshot->GetNodeNames();
 
     if (m_invocationState.remainingInDegree.size() != nodeNames.size())
     {
@@ -148,7 +214,7 @@ bool AgentGraphExecutor::SelectSourceNodes(const QVector<QString> &allSourceNode
     {
         _tagAgentDagNode sourceDefinition;
 
-        if (!m_dagGraph.GetNode(sourceNode, sourceDefinition))
+        if (!m_graphSnapshot->GetNode(sourceNode, sourceDefinition))
         {
             errorMessage = QStringLiteral("Agent runtime source node definition is missing: %1")
                                .arg(sourceNode);
@@ -206,7 +272,7 @@ bool AgentGraphExecutor::BuildActiveSubgraph(const QVector<QString> &sourceNodes
         m_invocationState.activeNodeIds.insert(nodeId);
         QVector<QString> successors;
 
-        if (!m_dagGraph.GetSuccessors(nodeId, successors))
+        if (!m_graphSnapshot->GetSuccessors(nodeId, successors))
         {
             errorMessage = QStringLiteral("Agent runtime reachable node lookup failed: %1").arg(nodeId);
             return false;
@@ -228,7 +294,7 @@ bool AgentGraphExecutor::BuildActiveSubgraph(const QVector<QString> &sourceNodes
 
         QVector<QString> predecessors;
 
-        if (!m_dagGraph.GetPredecessors(nodeId, predecessors))
+        if (!m_graphSnapshot->GetPredecessors(nodeId, predecessors))
         {
             errorMessage = QStringLiteral("Agent runtime active node predecessors are missing: %1")
                                .arg(nodeId);
@@ -265,7 +331,7 @@ bool AgentGraphExecutor::InitializeSourceBranches(const QVector<QString> &source
         _tagBranchState branch;
         _tagAgentDagNode sourceDefinition;
 
-        if (!m_dagGraph.GetNode(sourceNode, sourceDefinition))
+        if (!m_graphSnapshot->GetNode(sourceNode, sourceDefinition))
         {
             errorMessage = QStringLiteral("Agent runtime source node definition is missing: %1").arg(
                                sourceNode);
@@ -373,7 +439,7 @@ bool AgentGraphExecutor::InitializeSourceContexts(const AgentContext &context,
                                                   const AgentContext &sessionContext,
                                                   QString &errorMessage)
 {
-    for (const QString &nodeId : m_dagGraph.GetNodeNames())
+    for (const QString &nodeId : m_graphSnapshot->GetNodeNames())
     {
         if (!m_invocationState.activeNodeIds.contains(nodeId)
             || (m_invocationState.remainingInDegree.value(nodeId) != 0))
@@ -434,7 +500,7 @@ bool AgentGraphExecutor::ExecuteReadyNode(const QString &nodeId,
 
     _tagAgentDagNode node;
 
-    if (!m_dagGraph.GetNode(nodeId, node))
+    if (!m_graphSnapshot->GetNode(nodeId, node))
     {
         errorMessage = QStringLiteral("Agent runtime node definition is missing: %1").arg(nodeId);
         FailInvocation(nodeId, false, context, callbacks, errorMessage);
@@ -560,7 +626,7 @@ bool AgentGraphExecutor::CompleteNode(const QString &nodeId, QString &errorMessa
 
     QVector<QString> successors;
 
-    if (!m_dagGraph.GetSuccessors(normalizedNodeId, successors))
+    if (!m_graphSnapshot->GetSuccessors(normalizedNodeId, successors))
     {
         errorMessage = QStringLiteral("Agent runtime completed node is not in DAG: %1").arg(
                            normalizedNodeId);
@@ -598,7 +664,7 @@ bool AgentGraphExecutor::CompleteNode(const QString &nodeId, QString &errorMessa
 
         QVector<QString> predecessors;
 
-        if (!m_dagGraph.GetPredecessors(successorId, predecessors))
+        if (!m_graphSnapshot->GetPredecessors(successorId, predecessors))
         {
             errorMessage = QStringLiteral("Agent runtime successor predecessors are missing: %1").arg(
                                successorId);
@@ -814,8 +880,8 @@ bool AgentGraphExecutor::CreateJoinBranch(const QString &childNodeId, QString &e
     QVector<QString> predecessors;
     _tagAgentDagNode joinNode;
 
-    if (!m_dagGraph.GetPredecessors(normalizedChildNodeId, predecessors)
-        || !m_dagGraph.GetNode(normalizedChildNodeId, joinNode))
+    if (!m_graphSnapshot->GetPredecessors(normalizedChildNodeId, predecessors)
+        || !m_graphSnapshot->GetNode(normalizedChildNodeId, joinNode))
     {
         errorMessage = QStringLiteral("Agent runtime join definition is invalid: %1").arg(
                            normalizedChildNodeId);
@@ -1088,7 +1154,7 @@ bool AgentGraphExecutor::CommitInvocationResult(AgentContext &context,
 
     QString terminalNodeId;
 
-    for (const QString &nodeId : m_dagGraph.GetNodeNames())
+    for (const QString &nodeId : m_graphSnapshot->GetNodeNames())
     {
         if (!m_invocationState.activeNodeIds.contains(nodeId))
         {
@@ -1097,7 +1163,7 @@ bool AgentGraphExecutor::CommitInvocationResult(AgentContext &context,
 
         QVector<QString> successors;
 
-        if (!m_dagGraph.GetSuccessors(nodeId, successors))
+        if (!m_graphSnapshot->GetSuccessors(nodeId, successors))
         {
             errorMessage = QStringLiteral("Agent runtime terminal node lookup failed: %1").arg(nodeId);
             return false;

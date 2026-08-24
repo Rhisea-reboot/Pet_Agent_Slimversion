@@ -91,6 +91,12 @@ set(VPET_SOURCES
     src/agent/agent_runtime_scheduler.cpp
     src/agent/agent_runtime_nodes.cpp
     src/agent/agent_runtime_async.cpp
+    src/dageditor/agent_node_catalog.cpp
+    src/dageditor/dag_document.cpp
+    src/dageditor/agent_dag_validator.cpp
+    src/dageditor/dag_document_store.cpp
+    src/dageditor/dag_http_server.cpp
+    src/dageditor/dag_editor_server.cpp
     src/agent/memory_retrieve_node.cpp
     src/agent/memory_store_node.cpp
     src/memory/memory_graph.cpp
@@ -143,6 +149,12 @@ set(VPET_HEADERS
     include/vpet/agent/agent_graph_executor.h
     include/vpet/agent/agent_async_bridge.h
     include/vpet/agent/agent_runtime.h
+    include/vpet/dageditor/agent_node_catalog.h
+    include/vpet/dageditor/dag_document.h
+    include/vpet/dageditor/agent_dag_validator.h
+    include/vpet/dageditor/dag_document_store.h
+    include/vpet/dageditor/dag_http_request.h
+    include/vpet/dageditor/dag_editor_server.h
     include/vpet/agent/memory_retrieve_node.h
     include/vpet/agent/memory_store_node.h
     include/vpet/memory/memory_graph.h
@@ -156,7 +168,8 @@ set(VPET_HEADERS
     src/main_window.h
 )
 
-add_executable(${PROJECT_NAME} ${VPET_SOURCES} ${VPET_HEADERS})
+add_executable(${PROJECT_NAME} ${VPET_SOURCES} ${VPET_HEADERS}
+    resources/dag_editor/dag_editor_web.qrc)
 
 target_include_directories(${PROJECT_NAME}
     PRIVATE
@@ -205,6 +218,284 @@ if(BUILD_TESTING)
     set_property(TARGET agent_dag_graph_tests PROPERTY AUTOMOC_COMPILER_PREDEFINES OFF)
 
     add_test(NAME agent_dag_graph_tests COMMAND agent_dag_graph_tests)
+
+    add_executable(agent_node_catalog_tests
+        tests/agent_node_catalog_test.cpp
+        src/dageditor/agent_node_catalog.cpp
+        include/vpet/dageditor/agent_node_catalog.h
+    )
+
+    target_include_directories(agent_node_catalog_tests
+        PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/include
+    )
+
+    target_compile_definitions(agent_node_catalog_tests PRIVATE
+        DAG_EDITOR_EXAMPLE_CONFIG_PATH="${CMAKE_CURRENT_SOURCE_DIR}/agent_dag_structure.example.json"
+    )
+
+    target_link_libraries(agent_node_catalog_tests
+        PRIVATE
+            Qt6::Core
+            Qt6::Gui
+            Qt6::Test
+    )
+
+    set_property(TARGET agent_node_catalog_tests PROPERTY AUTOMOC_COMPILER_PREDEFINES OFF)
+
+    add_test(NAME agent_node_catalog_tests COMMAND agent_node_catalog_tests)
+
+    add_executable(dag_document_tests
+        tests/dag_document_test.cpp
+        src/dageditor/dag_document.cpp
+        include/vpet/dageditor/dag_document.h
+    )
+
+    target_include_directories(dag_document_tests
+        PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/include
+    )
+
+    target_link_libraries(dag_document_tests
+        PRIVATE
+            Qt6::Core
+            Qt6::Test
+    )
+
+    set_property(TARGET dag_document_tests PROPERTY AUTOMOC_COMPILER_PREDEFINES OFF)
+
+    add_test(NAME dag_document_tests COMMAND dag_document_tests)
+
+    add_executable(dag_validator_tests
+        tests/dag_validator_test.cpp
+        src/dageditor/agent_node_catalog.cpp
+        src/dageditor/dag_document.cpp
+        src/dageditor/agent_dag_validator.cpp
+        include/vpet/dageditor/agent_node_catalog.h
+        include/vpet/dageditor/dag_document.h
+        include/vpet/dageditor/agent_dag_validator.h
+    )
+
+    target_include_directories(dag_validator_tests
+        PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/include
+    )
+
+    target_compile_definitions(dag_validator_tests PRIVATE
+        DAG_EDITOR_EXAMPLE_CONFIG_PATH="${CMAKE_CURRENT_SOURCE_DIR}/agent_dag_structure.example.json"
+    )
+
+    target_link_libraries(dag_validator_tests
+        PRIVATE
+            Qt6::Core
+            Qt6::Gui
+            Qt6::Test
+    )
+
+    set_property(TARGET dag_validator_tests PROPERTY AUTOMOC_COMPILER_PREDEFINES OFF)
+
+    add_test(NAME dag_validator_tests COMMAND dag_validator_tests)
+
+    add_executable(dag_hot_reload_tests
+        tests/dag_hot_reload_test.cpp
+        src/agent/agent_context.cpp
+        src/agent/agent_dag_graph.cpp
+        src/dageditor/agent_node_catalog.cpp
+        src/dageditor/dag_document.cpp
+        src/dageditor/agent_dag_validator.cpp
+        src/agent/emotion_rewrite_node.cpp
+        src/agent/proactive_topic_node.cpp
+        src/agent/web_research_node.cpp
+        src/agent/invocation_queue_policy.cpp
+        src/agent/agent_output_policy.cpp
+        src/agent/agent_node_registry.cpp
+        src/agent/agent_graph_executor.cpp
+        src/agent/agent_async_bridge.cpp
+        src/agent/agent_runtime.cpp
+        src/agent/agent_runtime_scheduler.cpp
+        src/agent/agent_runtime_nodes.cpp
+        src/agent/agent_runtime_async.cpp
+        src/memory/memory_graph.cpp
+        src/memory/memory_repository.cpp
+        src/memory/memory_service.cpp
+        src/memory/memory_maintenance.cpp
+        src/memory/memory_consolidator.cpp
+        src/memory/embedding_client.cpp
+        src/memory/vector_store.cpp
+        src/agent/memory_retrieve_node.cpp
+        src/agent/memory_store_node.cpp
+        src/web/web_search_client.cpp
+        src/web/web_search_tool.cpp
+        src/web/web_research_engine.cpp
+        src/llm/llm_client.cpp
+        src/llm/vision_llm_client.cpp
+        src/stream_sentence_splitter.cpp
+        include/vpet/stream_sentence_splitter.h
+        include/vpet/agent/agent_context.h
+        include/vpet/agent/agent_context_keys.h
+        include/vpet/agent/agent_dag_graph.h
+        include/vpet/agent/emotion_rewrite_node.h
+        include/vpet/agent/proactive_topic_node.h
+        include/vpet/agent/web_research_node.h
+        include/vpet/agent/invocation_queue_policy.h
+        include/vpet/agent/agent_output_policy.h
+        include/vpet/agent/agent_node_registry.h
+        include/vpet/agent/agent_graph_executor.h
+        include/vpet/agent/agent_async_bridge.h
+        include/vpet/agent/agent_runtime.h
+        include/vpet/dageditor/agent_node_catalog.h
+        include/vpet/dageditor/dag_document.h
+        include/vpet/dageditor/agent_dag_validator.h
+        include/vpet/memory/memory_graph.h
+        include/vpet/memory/memory_repository.h
+        include/vpet/memory/memory_service.h
+        include/vpet/memory/memory_maintenance.h
+        include/vpet/memory/memory_consolidator.h
+        include/vpet/memory/embedding_client.h
+        include/vpet/memory/vector_store.h
+        include/vpet/agent/memory_retrieve_node.h
+        include/vpet/agent/memory_store_node.h
+        include/vpet/web/web_search_client.h
+        include/vpet/web/web_search_tool.h
+        include/vpet/web/web_research_engine.h
+        include/vpet/llm/llm_client.h
+        include/vpet/llm/vision_llm_client.h
+    )
+
+    target_include_directories(dag_hot_reload_tests
+        PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/include
+            ${VPET_VENDOR_ONNXRUNTIME_INCLUDE}
+    )
+
+    target_link_libraries(dag_hot_reload_tests
+        PRIVATE
+            Qt6::Core
+            Qt6::Gui
+            Qt6::Network
+            Qt6::Sql
+            Qt6::Test
+    )
+
+    vpet_deploy_qt_sqlite(dag_hot_reload_tests)
+    vpet_deploy_onnxruntime(dag_hot_reload_tests)
+
+    set_property(TARGET dag_hot_reload_tests PROPERTY AUTOMOC_COMPILER_PREDEFINES OFF)
+
+    add_test(NAME dag_hot_reload_tests COMMAND dag_hot_reload_tests)
+
+    add_executable(dag_document_store_tests
+        tests/dag_document_store_test.cpp
+        src/dageditor/agent_node_catalog.cpp
+        src/dageditor/dag_document.cpp
+        src/dageditor/agent_dag_validator.cpp
+        src/dageditor/dag_document_store.cpp
+        include/vpet/dageditor/agent_node_catalog.h
+        include/vpet/dageditor/dag_document.h
+        include/vpet/dageditor/agent_dag_validator.h
+        include/vpet/dageditor/dag_document_store.h
+    )
+
+    target_include_directories(dag_document_store_tests
+        PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/include
+    )
+
+    target_link_libraries(dag_document_store_tests
+        PRIVATE
+            Qt6::Core
+            Qt6::Gui
+            Qt6::Test
+    )
+
+    set_property(TARGET dag_document_store_tests PROPERTY AUTOMOC_COMPILER_PREDEFINES OFF)
+
+    add_test(NAME dag_document_store_tests COMMAND dag_document_store_tests)
+
+    add_executable(dag_http_server_tests
+        tests/dag_http_server_test.cpp
+        resources/dag_editor/dag_editor_web.qrc
+        src/agent/agent_context.cpp
+        src/agent/agent_dag_graph.cpp
+        src/dageditor/agent_node_catalog.cpp
+        src/dageditor/dag_document.cpp
+        src/dageditor/agent_dag_validator.cpp
+        src/dageditor/dag_document_store.cpp
+        src/dageditor/dag_http_server.cpp
+        src/dageditor/dag_editor_server.cpp
+        src/agent/emotion_rewrite_node.cpp
+        src/agent/proactive_topic_node.cpp
+        src/agent/web_research_node.cpp
+        src/agent/invocation_queue_policy.cpp
+        src/agent/agent_output_policy.cpp
+        src/agent/agent_node_registry.cpp
+        src/agent/agent_graph_executor.cpp
+        src/agent/agent_async_bridge.cpp
+        src/agent/agent_runtime.cpp
+        src/agent/agent_runtime_scheduler.cpp
+        src/agent/agent_runtime_nodes.cpp
+        src/agent/agent_runtime_async.cpp
+        src/memory/memory_graph.cpp
+        src/memory/memory_repository.cpp
+        src/memory/memory_service.cpp
+        src/memory/memory_maintenance.cpp
+        src/memory/memory_consolidator.cpp
+        src/memory/embedding_client.cpp
+        src/memory/vector_store.cpp
+        src/agent/memory_retrieve_node.cpp
+        src/agent/memory_store_node.cpp
+        src/web/web_search_client.cpp
+        src/web/web_search_tool.cpp
+        src/web/web_research_engine.cpp
+        src/llm/llm_client.cpp
+        src/llm/vision_llm_client.cpp
+        src/stream_sentence_splitter.cpp
+        include/vpet/stream_sentence_splitter.h
+        include/vpet/agent/agent_context.h
+        include/vpet/agent/agent_context_keys.h
+        include/vpet/agent/agent_runtime.h
+        include/vpet/agent/agent_dag_graph.h
+        include/vpet/dageditor/agent_node_catalog.h
+        include/vpet/dageditor/dag_document.h
+        include/vpet/dageditor/agent_dag_validator.h
+        include/vpet/dageditor/dag_document_store.h
+        include/vpet/dageditor/dag_http_request.h
+        include/vpet/dageditor/dag_editor_server.h
+        include/vpet/memory/memory_graph.h
+        include/vpet/memory/memory_repository.h
+        include/vpet/memory/memory_service.h
+        include/vpet/memory/memory_maintenance.h
+        include/vpet/memory/memory_consolidator.h
+        include/vpet/memory/embedding_client.h
+        include/vpet/memory/vector_store.h
+        include/vpet/web/web_search_client.h
+        include/vpet/web/web_search_tool.h
+        include/vpet/web/web_research_engine.h
+        include/vpet/llm/llm_client.h
+        include/vpet/llm/vision_llm_client.h
+    )
+
+    target_include_directories(dag_http_server_tests
+        PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/include
+            ${VPET_VENDOR_ONNXRUNTIME_INCLUDE}
+    )
+
+    target_link_libraries(dag_http_server_tests
+        PRIVATE
+            Qt6::Core
+            Qt6::Gui
+            Qt6::Network
+            Qt6::Sql
+            Qt6::Test
+    )
+
+    vpet_deploy_qt_sqlite(dag_http_server_tests)
+    vpet_deploy_onnxruntime(dag_http_server_tests)
+
+    set_property(TARGET dag_http_server_tests PROPERTY AUTOMOC_COMPILER_PREDEFINES OFF)
+
+    add_test(NAME dag_http_server_tests COMMAND dag_http_server_tests)
 
     add_executable(stream_sentence_splitter_tests
         tests/stream_sentence_splitter_test.cpp

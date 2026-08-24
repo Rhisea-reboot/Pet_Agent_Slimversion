@@ -20,6 +20,7 @@ namespace vpet
 
 class AgentRuntime;
 class ChatBubbleWindow;
+class DagEditorServer;
 class MemoryManagerDialog;
 class PerceptionPipeline;
 class VoiceInputManager;
@@ -227,6 +228,11 @@ private:
     void ShowMemoryManager();
 
     /**
+     * @brief 启动或打开 DAG 可视化编辑器（本地 HTTP 服务 + 浏览器）
+     */
+    void ShowDagEditor();
+
+    /**
      * @brief 请求应用程序退出
      *
      * 停止窗口层管理的异步资源后，请求 Qt 事件循环正常返回。
@@ -298,6 +304,7 @@ private:
     QMenu *m_trayMenu;                  ///< 系统托盘菜单
     AgentRuntime *m_agentRuntime;          ///< Agent 运行时对象，不持有所有权
     MemoryManagerDialog *m_memoryManagerDialog; ///< 长期记忆管理窗口
+    DagEditorServer *m_dagEditorServer;   ///< DAG 可视化编辑器服务（懒创建）
     QSize m_currentImageSize;             ///< 当前图片尺寸
     QString m_lastFramePath;              ///< 最近一次已加载的帧路径（避免重复磁盘 I/O）
     bool m_isVoiceHotkeyRegistered;        ///< 系统全局语音热键是否已注册

@@ -11,6 +11,7 @@
 #include <QVector>
 
 #include <functional>
+#include <memory>
 
 namespace vpet
 {
@@ -21,6 +22,16 @@ namespace vpet
 class AgentGraphExecutor
 {
 public:
+    /**
+     * @brief 空闲门控换图结果
+     */
+    enum class ReplaceGraphResult
+    {
+        Applied,         ///< 已立即换图
+        DeferredBusy,    ///< 运行中或存在挂起异步请求，稍后重试
+        RejectedInvalid  ///< 快照为空或无法拓扑排序，已拒绝
+    };
+
     /**
      * @brief Runtime operations required while pumping the graph.
      */
@@ -76,6 +87,42 @@ public:
      * @return Last completed invocation ID; 0 when none completed yet.
      */
     quint64 GetLastCompletedInvocationId() const;
+
+    /**
+     * @brief 从 JSON 文件构建图快照与拓扑序，不触碰当前执行状态。
+     * @param[in] configPath DAG 配置路径。
+     * @param[out] snapshotOut 输出图快照。
+     * @param[out] executionOrderOut 输出拓扑序。
+     * @param[out] errorMessage 失败描述。
+     * @return 加载与排序成功返回 true。
+     */
+    static bool BuildSnapshotFromFile(const QString &configPath,
+                                      std::shared_ptr<const AgentDagGraph> &snapshotOut,
+                                      QVector<QString> &executionOrderOut,
+                                      QString &errorMessage);
+
+    /**
+     * @brief 判断执行器是否处于允许换图的空闲状态。
+     *
+     * 空闲 = 无进行中的 invocation 且无挂起的异步续延；异步挂起期间旧节点恢复
+     * 仍需读取旧图，忙碌期换图会撕裂关联。
+     *
+     * @param[in] hasPendingAsync 运行时是否存在挂起异步请求。
+     * @return 空闲返回 true。
+     */
+    bool IsIdle(bool hasPendingAsync) const;
+
+    /**
+     * @brief 空闲时原子替换当前图；忙碌时由调用方延迟重试。
+     *
+        * 换图前会先对快照执行拓扑排序校验，失败则拒绝并保持旧图不变。
+     *
+     * @param[in] snapshot 新图快照。
+     * @param[in] hasPendingAsync 运行时是否存在挂起异步请求。
+     * @return Applied / DeferredBusy / RejectedInvalid。
+     */
+    ReplaceGraphResult ReplaceGraphIfIdle(std::shared_ptr<const AgentDagGraph> snapshot,
+                                          bool hasPendingAsync);
 
     /**
      * @brief Initializes graph state for a context trigger.
@@ -335,8 +382,8 @@ private:
                                 QString &errorMessage);
 
 private:
-    AgentDagGraph m_dagGraph;                 ///< Loaded DAG structure.
-    QVector<QString> m_executionOrder;        ///< Loaded topological order.
+    std::shared_ptr<const AgentDagGraph> m_graphSnapshot; ///< 当前图快照（热重载最小交换单元）
+    QVector<QString> m_executionOrder;        ///< 随快照重建的拓扑序
     _tagInvocationState m_invocationState;    ///< Current graph invocation state.
     quint64 m_nextInvocationId;               ///< Next invocation sequence value.
     quint64 m_lastCompletedInvocationId;      ///< Most recently completed invocation ID.

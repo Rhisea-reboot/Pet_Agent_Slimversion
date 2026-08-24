@@ -8,9 +8,12 @@
 #include <QDateTime>
 #include <QDebug>
 #include <QDir>
+#include <QFile>
 #include <QFileInfo>
+#include <QFileSystemWatcher>
 #include <QSize>
 #include <QStringList>
+#include <QTimer>
 #include <QVariant>
 
 namespace vpet
@@ -43,6 +46,11 @@ AgentRuntime::AgentRuntime(WebResearchEngine *webResearchEngine,
     , m_memoryConfigLoaded(false)
     , m_nodeRegistry()
     , m_graphExecutor()
+    , m_dagConfigWatcher(nullptr)
+    , m_dagConfigPath()
+    , m_dagConfigFingerprint()
+    , m_pendingGraphSnapshot()
+    , m_dagConfigReloadPending(false)
     , m_asyncBridge()
     , m_invocationQueue()
     , m_lastPerceptionFrameHash()
@@ -788,6 +796,9 @@ bool AgentRuntime::Start(const QString &configPath, QString &errorMessage)
         return false;
     }
 
+    // 热重载地基：配置文件一经加载即纳入外部修改监视。
+    SetupDagConfigWatcher(configPath);
+
     QVariant triggerValue;
 
     if (!m_context.GetValue(CONTEXT_KEY_RUNTIME_TRIGGER_TYPE, triggerValue)
@@ -797,6 +808,207 @@ bool AgentRuntime::Start(const QString &configPath, QString &errorMessage)
     }
 
     return Execute(errorMessage);
+}
+
+QString AgentRuntime::GetDagConfigPath() const
+{
+    return m_dagConfigPath;
+}
+
+AgentRuntime::_tagRuntimeStatus AgentRuntime::GetRuntimeStatus() const
+{
+    _tagRuntimeStatus status;
+    status.invocationActive = m_graphExecutor.IsActive();
+    status.pendingAsync = HasPendingAsyncRequest();
+    status.queuedInvocations = !m_invocationQueue.IsEmpty();
+    return status;
+}
+
+bool AgentRuntime::RequestDagReload(const QString &configPath,
+                                    DagReloadOutcome &outcome,
+                                    QString &errorMessage)
+{
+    outcome = DagReloadOutcome::Failed;
+
+    if (!m_isLoaded)
+    {
+        errorMessage = QStringLiteral("Agent runtime is not loaded; hot reload is unavailable.");
+        return false;
+    }
+
+    const QString normalizedPath = configPath.trimmed().isEmpty()
+                                       ? m_dagConfigPath
+                                       : configPath.trimmed();
+
+    std::shared_ptr<const AgentDagGraph> snapshot;
+    QVector<QString> executionOrder;
+
+    if (!AgentGraphExecutor::BuildSnapshotFromFile(normalizedPath,
+                                                   snapshot,
+                                                   executionOrder,
+                                                   errorMessage))
+    {
+        qWarning() << "[Agent] DAG hot reload rejected:" << errorMessage;
+        emit LogMessage(QStringLiteral("DAG 热重载失败：%1").arg(errorMessage));
+        emit DagGraphReloadFailed(normalizedPath, errorMessage);
+        return false;
+    }
+
+    const auto replaceResult =
+        m_graphExecutor.ReplaceGraphIfIdle(snapshot, HasPendingAsyncRequest());
+
+    if (replaceResult == AgentGraphExecutor::ReplaceGraphResult::RejectedInvalid)
+    {
+        errorMessage = QStringLiteral("New DAG snapshot failed validation.");
+        qWarning() << "[Agent]" << errorMessage;
+        emit LogMessage(QStringLiteral("DAG 热重载失败：新图校验未通过。"));
+        emit DagGraphReloadFailed(normalizedPath, errorMessage);
+        return false;
+    }
+
+    if (replaceResult == AgentGraphExecutor::ReplaceGraphResult::DeferredBusy)
+    {
+        m_pendingGraphSnapshot = std::move(snapshot);
+        m_dagConfigPath = normalizedPath;
+        outcome = DagReloadOutcome::Deferred;
+        qDebug() << "[Agent] DAG reload deferred until the current invocation finishes.";
+        emit LogMessage(QStringLiteral("运行中收到新图，将在本轮结束后自动生效。"));
+        emit DagGraphReloaded(normalizedPath, false);
+        return true;
+    }
+
+    m_dagConfigPath = normalizedPath;
+    outcome = DagReloadOutcome::Applied;
+    qDebug() << "[Agent] DAG hot reloaded:" << normalizedPath;
+    qDebug() << "[Agent] Topological order:" << m_graphExecutor.GetExecutionOrder();
+    emit LogMessage(QStringLiteral("DAG 已热重载并立即生效。"));
+    emit DagGraphReloaded(normalizedPath, true);
+    return true;
+}
+
+void AgentRuntime::TryApplyPendingDagReload()
+{
+    if (m_pendingGraphSnapshot == nullptr)
+    {
+        return;
+    }
+
+    const auto replaceResult =
+        m_graphExecutor.ReplaceGraphIfIdle(m_pendingGraphSnapshot, HasPendingAsyncRequest());
+
+    if (replaceResult == AgentGraphExecutor::ReplaceGraphResult::DeferredBusy)
+    {
+        return; // 仍忙碌，等待下一个收尾点重试
+    }
+
+    const QString configPath = m_dagConfigPath;
+    const std::shared_ptr<const AgentDagGraph> appliedSnapshot = m_pendingGraphSnapshot;
+    (void)appliedSnapshot;
+    m_pendingGraphSnapshot.reset();
+
+    if (replaceResult == AgentGraphExecutor::ReplaceGraphResult::RejectedInvalid)
+    {
+        const QString message = QStringLiteral("Deferred DAG snapshot failed validation.");
+        qWarning() << "[Agent]" << message;
+        emit LogMessage(QStringLiteral("延迟应用的新图校验未通过，保留旧图。"));
+        emit DagGraphReloadFailed(configPath, message);
+        return;
+    }
+
+    qDebug() << "[Agent] Deferred DAG reload applied:" << configPath;
+    qDebug() << "[Agent] Topological order:" << m_graphExecutor.GetExecutionOrder();
+    emit LogMessage(QStringLiteral("排队中的新图已在空闲时自动生效。"));
+    emit DagGraphReloaded(configPath, true);
+}
+
+void AgentRuntime::SetupDagConfigWatcher(const QString &configPath)
+{
+    const QString normalizedPath = QFileInfo(configPath).absoluteFilePath();
+
+    if (normalizedPath.isEmpty())
+    {
+        return;
+    }
+
+    m_dagConfigPath = normalizedPath;
+
+    QFile configFile(normalizedPath);
+
+    if (configFile.open(QIODevice::ReadOnly))
+    {
+        m_dagConfigFingerprint =
+            QCryptographicHash::hash(configFile.readAll(), QCryptographicHash::Sha256);
+    }
+
+    if (m_dagConfigWatcher == nullptr)
+    {
+        m_dagConfigWatcher = new QFileSystemWatcher(this);
+
+        // 编辑器保存通常采用“临时文件替换”方式，fileChanged 只触发一次且路径
+        // 可能失效；同时监听所在目录才能稳定捕捉替换事件。
+        connect(m_dagConfigWatcher, &QFileSystemWatcher::fileChanged,
+                this, &AgentRuntime::OnDagConfigFileChanged);
+        connect(m_dagConfigWatcher, &QFileSystemWatcher::directoryChanged,
+                this, &AgentRuntime::OnDagConfigFileChanged);
+    }
+
+    const QString watchDirectory = QFileInfo(normalizedPath).absolutePath();
+
+    if (!m_dagConfigWatcher->files().contains(normalizedPath))
+    {
+        m_dagConfigWatcher->addPath(normalizedPath);
+    }
+
+    if (!m_dagConfigWatcher->directories().contains(watchDirectory))
+    {
+        m_dagConfigWatcher->addPath(watchDirectory);
+    }
+}
+
+void AgentRuntime::OnDagConfigFileChanged()
+{
+    if (m_dagConfigReloadPending || m_dagConfigPath.isEmpty())
+    {
+        return;
+    }
+
+    m_dagConfigReloadPending = true;
+
+    // 防抖：编辑器可能触发多次连续通知；延迟统一处理一次。
+    QTimer::singleShot(250, this, [this]()
+    {
+        m_dagConfigReloadPending = false;
+
+        if (m_dagConfigPath.isEmpty() || !QFileInfo::exists(m_dagConfigPath))
+        {
+            return;
+        }
+
+        QFile configFile(m_dagConfigPath);
+
+        if (!configFile.open(QIODevice::ReadOnly))
+        {
+            return;
+        }
+
+        const QByteArray fingerprint =
+            QCryptographicHash::hash(configFile.readAll(), QCryptographicHash::Sha256);
+
+        if (fingerprint == m_dagConfigFingerprint)
+        {
+            return; // 内容未变化（例如仅时间戳变化），跳过
+        }
+
+        m_dagConfigFingerprint = fingerprint;
+
+        // “临时文件替换”式保存会让 Qt 自动取消对旧 inode 的监听，重新挂上。
+        SetupDagConfigWatcher(m_dagConfigPath);
+
+        DagReloadOutcome outcome = DagReloadOutcome::Failed;
+        QString reloadErrorMessage;
+
+        RequestDagReload(m_dagConfigPath, outcome, reloadErrorMessage);
+    });
 }
 
 QVector<QString> AgentRuntime::GetExecutionOrder() const

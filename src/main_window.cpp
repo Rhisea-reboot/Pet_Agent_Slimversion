@@ -1,6 +1,7 @@
 #include "main_window.h"
 #include "vpet/agent/agent_runtime.h"
 #include "vpet/chat_bubble_window.h"
+#include "vpet/dageditor/dag_editor_server.h"
 #include "vpet/llm/vision_llm_client.h"
 #include "vpet/memory/memory_manager_dialog.h"
 #include "vpet/perception/perception_pipeline.h"
@@ -13,6 +14,8 @@
 #include <QByteArray>
 #include <QCoreApplication>
 #include <QDebug>
+#include <QDesktopServices>
+#include <QDir>
 #include <QGuiApplication>
 #include <QIcon>
 #include <QMenu>
@@ -52,6 +55,7 @@ MainWindow::MainWindow(QWidget *parent)
     , m_trayMenu(nullptr)
     , m_agentRuntime(nullptr)
     , m_memoryManagerDialog(nullptr)
+    , m_dagEditorServer(nullptr)
     , m_currentImageSize()
     , m_lastFramePath()
     , m_isVoiceHotkeyRegistered(false)
@@ -104,6 +108,7 @@ MainWindow::~MainWindow()
     UnregisterVoiceHotkey();
     delete m_chatBubbleWindow;
     delete m_memoryManagerDialog;
+    delete m_dagEditorServer;
     delete m_voiceInputManager;
     delete m_perceptionPipeline;
     delete m_controller;
@@ -813,6 +818,15 @@ void MainWindow::ShowPetContextMenu(const QPoint &globalPosition)
                 this, &MainWindow::ShowMemoryManager);
     }
 
+    QAction *dagEditorAction = menu.addAction(QStringLiteral("DAG 编辑器"));
+
+    if (dagEditorAction != nullptr)
+    {
+        dagEditorAction->setEnabled(m_agentRuntime != nullptr);
+        connect(dagEditorAction, &QAction::triggered,
+                this, &MainWindow::ShowDagEditor);
+    }
+
     const QStringList surfacedMemoryIds = (m_agentRuntime != nullptr)
                                                ? m_agentRuntime->GetLatestSurfacedMemoryIds()
                                                : QStringList();
@@ -862,6 +876,47 @@ void MainWindow::ShowPetContextMenu(const QPoint &globalPosition)
     }
 
     menu.exec(globalPosition);
+}
+
+void MainWindow::ShowDagEditor()
+{
+    if (m_dagEditorServer == nullptr)
+    {
+        m_dagEditorServer = new DagEditorServer(this);
+    }
+
+    if (m_dagEditorServer->IsRunning())
+    {
+        // 已在运行：直接再次打开编辑器页面。
+        QDesktopServices::openUrl(m_dagEditorServer->EditorUrl());
+        return;
+    }
+
+    QString configPath = (m_agentRuntime != nullptr)
+                             ? m_agentRuntime->GetDagConfigPath()
+                             : QString();
+
+    if (configPath.isEmpty())
+    {
+        configPath = QDir(QCoreApplication::applicationDirPath())
+                         .filePath(QStringLiteral("agent_dag_structure.json"));
+    }
+
+    QString errorMessage;
+
+    if (!m_dagEditorServer->Start(configPath,
+                                  m_agentRuntime,
+                                  nullptr,
+                                  errorMessage))
+    {
+        qWarning() << "[DagEditor] Failed to start editor server:"
+                   << errorMessage;
+        m_dagEditorServer->deleteLater();
+        m_dagEditorServer = nullptr;
+        return;
+    }
+
+    QDesktopServices::openUrl(m_dagEditorServer->EditorUrl());
 }
 
 void MainWindow::ShowMemoryManager()

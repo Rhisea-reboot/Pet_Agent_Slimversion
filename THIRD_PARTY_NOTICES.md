@@ -24,6 +24,7 @@
 | PyTorch | 2.13.0+cpu | **BSD-3-Clause** | Python 包（torch CPU） | ✅（runtime/） |
 | 其他 Python 包 | numpy/scipy/spacy/transformers 等 | 各自许可证 | Python 包 | ✅（runtime/，dist-info 自带） |
 | SQLite | — | **Public Domain** | Qt SQL 驱动 + 向量库存储 | ✅ |
+| litegraph.js | 0.7.18（jagenjo/litegraph.js） | **MIT** | 压缩 JS + CSS（qrc 内嵌资源） | ✅（DAG Web 编辑器前端） |
 | Mesa llvmpipe | Qt 附带 | **MIT** | opengl32sw.dll（软渲染） | ✅ |
 | Inno Setup | 构建期工具 | 见其官网 | 安装包制作工具 | ❌ 不随产品分发 |
 
@@ -118,6 +119,10 @@
 ### 2.8 其他
 
 - **SQLite**：Public Domain；用于 Qt SQL 驱动与记忆向量库（`vectors.sqlite3`）。
+- **litegraph.js**：MIT；DAG Web 编辑器的图画布库。以未修改的 `litegraph.min.js` +
+  `litegraph.css` 形式内嵌于 qrc 资源（`resources/dag_editor/vendor/`），许可证全文随附于
+  `resources/dag_editor/vendor/LICENSE.litegraph.txt` 与 `licenses/MIT.txt`。
+  版权：Copyright (c) Javi Agenjo（jagenjo）及贡献者。
 - **Mesa llvmpipe**（opengl32sw.dll，Qt 附带软件渲染）：MIT。
 - **D3Dcompiler_47.dll / dxcompiler.dll**：Microsoft 可再分发组件，随 windeployqt 部署。
 - **Inno Setup**：仅用于构建安装程序（`packaging/VPet.iss`），不随产品分发，遵循其自身许可

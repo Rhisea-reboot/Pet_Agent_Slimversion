@@ -21,7 +21,7 @@ Agent 的核心职责是把用户输入和屏幕感知转换为可追踪的 DAG 
 }
 ```
 
-`AgentDagGraph` 负责 JSON 解析、节点 ID 校验、边引用校验、DAG 环检测和拓扑序计算。配置修改需要重启应用；当前没有动态热加载。
+`AgentDagGraph` 负责 JSON 解析、节点 ID 校验、边引用校验、DAG 环检测和拓扑序计算。运行时通过快照热重载支持不中断的配置更新（见下文「DAG 热重载」）；`AgentDagValidator` 提供更细粒度的错误/警告诊断，供编辑器与保存流程使用。
 
 节点的执行逻辑通过 `AgentNodeRegistry` 按 `type` 注册和分发。节点之间不应依赖另一个节点的私有状态，而应使用 `semantic.*` 或 `node.input.*`/`node.output.*` 协议，完整约定见 [AGENT_CONTEXT_KEY_PROTOCOL.md](AGENT_CONTEXT_KEY_PROTOCOL.md)。
 
@@ -48,6 +48,26 @@ AgentRuntime
 运行时同一时刻只执行一个 invocation。节点同步完成后继续推进 ready queue；异步节点把独立 context、invocation ID、分支、节点类型和 request ID 登记到 `AgentAsyncBridge`，回调验证复合关联后恢复原分支。
 
 每个 invocation 以 session context 为基座。分支只保存本轮增量，Join 默认拒绝相同 key 的冲突写入；可通过 `config.merge` 为指定 key 使用 `prefer_user`、`prefer_vision` 或 `concat`。失败 invocation 不提交本轮结果，成功 invocation 当前只持久化允许的 `conversation.history`。
+
+## DAG 热重载
+
+运行时持有 `std::shared_ptr<const AgentDagGraph>` 快照。`AgentRuntime::RequestDagReload` 从磁盘构建新快照并调用 `AgentGraphExecutor::ReplaceGraphIfIdle`：
+
+- 空闲（无进行中的 invocation、无挂起异步回调、队列非空时也不打断）：立即应用；
+- 忙碌：延迟到当前 invocation 的完成点（同步完成、异步恢复、超时或队列切换）再原子替换；
+- 新快照无效：保留旧图并发出 `DagGraphReloadFailed`。
+
+`Start()` 会用 `QFileSystemWatcher` 监视配置文件（250 ms 防抖 + SHA-256 指纹去重）。进行中的一轮永远用旧图跑完，新一轮用新图。
+
+## DAG Web 编辑器
+
+桌宠右键菜单的「DAG 编辑器」启动 `DagEditorServer`（懒创建）：
+
+- **传输层**：`DagHttpServer` 基于 `QTcpServer` 实现最小 HTTP/1.1 + SSE。只绑定回环地址，端口 0 由内核分配；请求体上限 1 MB；普通请求 `Connection: close`，SSE 长连接每 15 秒发心跳。
+- **安全**：随机一次性 token（启动时经 URL 打开浏览器），API 请求必须带 `X-DAG-Token` 头或 `?token=`；Host 头白名单（`127.0.0.1:port` / `localhost:port`）防御 DNS rebinding；不发 CORS 头。
+- **文档层**：`DagDocumentStore` 管理格式 v1.1 文档（`version/nodes/edges/editor`），保存走 QSaveFile 原子提交 + `.bak` 备份；revision 乐观锁（PUT 带 `?baseRevision=N`，冲突返回 409 与最新文档）；外部修改通过指纹检测后 `AdoptExternalFile` 采纳为新基线。
+- **REST API**：`GET /api/meta`、`GET /api/object_info`（节点 schema 目录）、`GET/PUT /api/graph`、`POST /api/graph/validate`、`POST /api/graph/reload`、`GET /api/runtime/status`、`GET /api/events`（SSE 单通道 `main`）。
+- **前端**：零构建 ES5 脚本从 qrc 资源提供（`resources/dag_editor/`），litegraph.js 0.7.18（MIT，见 `THIRD_PARTY_NOTICES.md`）负责画布渲染；左侧节点库、右侧按 schema 渲染的属性面板、底部校验问题栏。左键只选中/框选/拖拽/连线，只有右键打开节点、连线或画布菜单；保存成功即触发运行时热重载并在工具栏显示结果。
 
 ## 默认 DAG
 
@@ -93,10 +113,12 @@ vision.input -> vision.llm -> proactive.topic -> llm.chat
 
 ## 测试与验证
 
-CTest 当前注册 6 个目标：DAG 图、Runtime 调度、应用集成、搜索客户端、研究引擎和 daemon 集成测试。Windows 命令行环境应使用：
+CTest 覆盖：DAG 图、节点目录、文档格式、校验器、热重载、文档存储、HTTP/编辑器服务（含 SSE 与鉴权）、Runtime 调度、应用集成、搜索客户端、研究引擎和 daemon 集成测试。Windows 命令行环境应使用：
 
 ```powershell
 .\scripts\Run-Tests.ps1
 ```
+
+编辑器手工冒烟验证可用 `scripts\smoke_dag_editor.ps1`（校验构建产物、前端资源，并对运行中的编辑器 URL 逐项探测 API）。
 
 该脚本会从 `CMakeCache.txt` 推导 Qt 和匹配 MinGW 运行时目录，补齐测试子进程的 `PATH`，然后构建 Debug 目标并运行 CTest。daemon 集成测试在 daemon 不可达时使用 `QSKIP`，不把本地服务作为所有开发者的硬前置条件。

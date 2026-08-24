@@ -1,0 +1,15 @@
+<!DOCTYPE RCC>
+<RCC version="1.0">
+    <qresource prefix="/dag_editor">
+        <file>index.html</file>
+        <file>app.js</file>
+        <file>api.js</file>
+        <file>style.css</file>
+        <file>graph_adapter.js</file>
+        <file>widgets.js</file>
+        <file>panels/library.js</file>
+        <file>panels/property.js</file>
+        <file>vendor/litegraph.min.js</file>
+        <file>vendor/litegraph.css</file>
+    </qresource>
+</RCC>
