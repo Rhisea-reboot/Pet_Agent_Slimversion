@@ -80,3 +80,7 @@ docs/project_evaluation_*.md
 
 # 个人手工调试程序（不公开，保留本地）
 tests/manual/
+
+# Python 缓存产物
+__pycache__/
+*.pyc
