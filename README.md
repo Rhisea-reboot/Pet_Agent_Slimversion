@@ -140,6 +140,9 @@ cmake --build build --config Debug
 .\packaging\Build-Release.ps1 -QtPrefix E:\Qt\6.9.2\mingw_64
 ```
 
+- 加 `-IncludeKokoroWeights` 可将 Kokoro 权重一并打包（体积约 +330 MB）。
+- 加 `-IncludeEmbeddingModel` 可将 BGE 量化 ONNX 模型（约 23 MB）打包，并在发行目录生成默认启用向量检索的 `memory_config.json`，开箱即用长期记忆的本地向量检索。
+
 非标准安装或 CI 环境可显式传入工具路径，避免依赖 Qt Online Installer 的目录结构：
 
 ```powershell

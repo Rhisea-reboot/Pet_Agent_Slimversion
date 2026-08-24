@@ -4,7 +4,8 @@ param(
     [string]$ReleaseDirectory,
     [ValidateRange(0, [int]::MaxValue)]
     [int]$CoreSizeLimitMiB = 500,
-    [switch]$KokoroIncluded
+    [switch]$KokoroIncluded,
+    [switch]$EmbeddingIncluded
 )
 
 $ErrorActionPreference = "Stop"
@@ -32,6 +33,30 @@ $requiredFiles = @(
 $missing = @($requiredFiles | Where-Object { -not (Test-Path -LiteralPath (Join-Path $ReleaseDirectory $_)) })
 if ($missing.Count -gt 0) {
     throw ("Release self-check failed. Missing:`n" + ($missing -join [Environment]::NewLine))
+}
+
+if ($EmbeddingIncluded) {
+    $embeddingRequired = @(
+        "onnxruntime.dll",
+        "memory_config.json",
+        "models\embedding\bge-small-zh-v1.5\onnx\model_quantized.onnx",
+        "models\embedding\bge-small-zh-v1.5\tokenizer.json",
+        "models\embedding\bge-small-zh-v1.5\tokenizer_config.json",
+        "models\embedding\bge-small-zh-v1.5\vocab.txt",
+        "models\embedding\bge-small-zh-v1.5\config.json"
+    )
+    $embeddingMissing = @($embeddingRequired |
+        Where-Object { -not (Test-Path -LiteralPath (Join-Path $ReleaseDirectory $_)) })
+    if ($embeddingMissing.Count -gt 0) {
+        throw ("Release self-check failed. Embedding files missing:`n" +
+            ($embeddingMissing -join [Environment]::NewLine))
+    }
+
+    $releaseMemoryConfig = Get-Content -Raw -LiteralPath (Join-Path $ReleaseDirectory "memory_config.json") |
+        ConvertFrom-Json
+    if (-not $releaseMemoryConfig.embedding.enabled) {
+        throw "Release self-check failed: memory_config.json embedding.enabled is not true"
+    }
 }
 
 $forbiddenPaths = @("GPT-SoVITS", "models\vosk")
@@ -117,6 +142,8 @@ $runtimeBytes = Get-DirectoryBytes -Path (Join-Path $ReleaseDirectory "runtime")
 $modelBytes = Get-DirectoryBytes -Path (Join-Path $ReleaseDirectory "models\sensevoice")
 $kokoroBytes = 0
 if ($KokoroIncluded) { $kokoroBytes = Get-DirectoryBytes -Path (Join-Path $ReleaseDirectory "models\hf") }
+$embeddingBytes = 0
+if ($EmbeddingIncluded) { $embeddingBytes = Get-DirectoryBytes -Path (Join-Path $ReleaseDirectory "models\embedding") }
 $coreBytes = $totalBytes - $runtimeBytes
 $coreMiB = [math]::Round($coreBytes / 1MB, 2)
 
@@ -126,9 +153,10 @@ if ($coreMiB -gt $CoreSizeLimitMiB) {
 
 Write-Host ("Release self-check passed. Animation PNG count: {0}" -f $animationCount)
 Write-Host (
-    "Package size: {0} MiB (runtime: {1} MiB, SenseVoice: {2} MiB, Kokoro weights: {3} MiB, core: {4} MiB)" -f
+    "Package size: {0} MiB (runtime: {1} MiB, SenseVoice: {2} MiB, Kokoro weights: {3} MiB, Embedding: {4} MiB, core: {5} MiB)" -f
     ([math]::Round($totalBytes / 1MB, 2)),
     ([math]::Round($runtimeBytes / 1MB, 2)),
     ([math]::Round($modelBytes / 1MB, 2)),
     ([math]::Round($kokoroBytes / 1MB, 2)),
+    ([math]::Round($embeddingBytes / 1MB, 2)),
     $coreMiB)

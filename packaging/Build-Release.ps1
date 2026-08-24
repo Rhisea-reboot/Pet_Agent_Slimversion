@@ -9,7 +9,8 @@ param(
     [string]$NinjaPath = "",
 [string]$MinGWBin = "",
     [int]$CoreSizeLimitMiB = 500,
-    [switch]$IncludeKokoroWeights
+    [switch]$IncludeKokoroWeights,
+    [switch]$IncludeEmbeddingModel
 )
 
 $ErrorActionPreference = "Stop"
@@ -125,6 +126,28 @@ if ($IncludeKokoroWeights) {
         $CoreSizeLimitMiB = 1000
     }
 }
+
+# 本地向量检索（BGE ONNX embedding）所需输入：
+# - 量化模型 model_quantized.onnx（22.9 MiB，CPU 友好；fp32 版 90.5 MiB 不入包）
+# - onnxruntime.dll 由 EmbeddingClient 从可执行文件目录动态加载
+$embeddingModelDir = Join-Path $root "models\embedding\bge-small-zh-v1.5"
+$onnxRuntimeDll = Join-Path $root "vendor\onnxruntime\bin\onnxruntime.dll"
+if ($IncludeEmbeddingModel) {
+    foreach ($requiredEmbedding in @(
+        "onnx\model_quantized.onnx",
+        "tokenizer.json",
+        "tokenizer_config.json",
+        "vocab.txt",
+        "config.json"
+    )) {
+        if (-not (Test-Path -LiteralPath (Join-Path $embeddingModelDir $requiredEmbedding))) {
+            throw "Required release input is missing: models\embedding\bge-small-zh-v1.5\$requiredEmbedding"
+        }
+    }
+    if (-not (Test-Path -LiteralPath $onnxRuntimeDll)) {
+        throw "Required release input is missing: vendor\onnxruntime\bin\onnxruntime.dll"
+    }
+}
 if (Test-Path -LiteralPath $OutputDirectory) {
     throw "Release output already exists; choose a new output directory: $OutputDirectory"
 }
@@ -146,6 +169,43 @@ Copy-Item -LiteralPath $exePath -Destination (Join-Path $OutputDirectory "VPet.e
 
 Copy-Item -LiteralPath (Join-Path $root "tools") -Destination (Join-Path $OutputDirectory "tools") -Recurse -Force
 Copy-Item -LiteralPath (Join-Path $root "models\sensevoice") -Destination (Join-Path $OutputDirectory "models\sensevoice") -Recurse -Force
+
+# onnxruntime 运行时 DLL：EmbeddingClient 从可执行文件目录动态加载；
+# 无 embedding 模型时静默回退为关键词检索，因此始终随包分发。
+if (Test-Path -LiteralPath $onnxRuntimeDll) {
+    Copy-Item -LiteralPath $onnxRuntimeDll -Destination $OutputDirectory -Force
+    Copy-Item -LiteralPath (Join-Path $root "vendor\onnxruntime\bin\onnxruntime_providers_shared.dll") `
+        -Destination $OutputDirectory -Force -ErrorAction SilentlyContinue
+}
+
+if ($IncludeEmbeddingModel) {
+    # 只打包量化模型与分词器文件（fp32 90.5 MiB 不入包，见上）。
+    $embeddingDst = Join-Path $OutputDirectory "models\embedding\bge-small-zh-v1.5"
+    New-Item -ItemType Directory -Force -Path (Join-Path $embeddingDst "onnx") | Out-Null
+    foreach ($embeddingFile in @(
+        "onnx\model_quantized.onnx",
+        "tokenizer.json",
+        "tokenizer_config.json",
+        "vocab.txt",
+        "config.json"
+    )) {
+        Copy-Item -LiteralPath (Join-Path $embeddingModelDir $embeddingFile) `
+            -Destination (Join-Path $embeddingDst $embeddingFile) -Force
+    }
+
+    # 生成发行版 memory_config.json：以仓库基线为模板，默认启用本地向量检索，
+    # 指向随包分发的量化模型。UTF-8 无 BOM 写入（Qt 的 QJsonDocument 按无 BOM 解析）。
+    $releaseMemoryConfig = Get-Content -Raw -LiteralPath (Join-Path $root "memory_config.json") |
+        ConvertFrom-Json
+    $releaseMemoryConfig.embedding.enabled = $true
+    $releaseMemoryConfig.embedding.model_dir = "models/embedding/bge-small-zh-v1.5"
+    $releaseMemoryConfig.embedding.onnx_model = "onnx/model_quantized.onnx"
+    $releaseMemoryConfig.embedding.tokenizer_file = "tokenizer.json"
+    [System.IO.File]::WriteAllText(
+        (Join-Path $OutputDirectory "memory_config.json"),
+        ($releaseMemoryConfig | ConvertTo-Json -Depth 10),
+        (New-Object System.Text.UTF8Encoding($false)))
+}
 
 if ($IncludeKokoroWeights) {
     # 只搬运快照文件与 refs（解引用符号链接），跳过 blobs：huggingface_hub 加载仅需
@@ -228,6 +288,7 @@ $testArgs = @{
     CoreSizeLimitMiB = $CoreSizeLimitMiB
 }
 if ($IncludeKokoroWeights) { $testArgs.KokoroIncluded = $true }
+if ($IncludeEmbeddingModel) { $testArgs.EmbeddingIncluded = $true }
 & (Join-Path $PSScriptRoot "Test-Release.ps1") @testArgs
 if ($LASTEXITCODE -ne 0) { throw "Release self-check failed" }
 
