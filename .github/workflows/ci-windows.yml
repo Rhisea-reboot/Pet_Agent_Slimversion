@@ -19,14 +19,16 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # Qt 6.9.2 mingw_64 + 配套 MinGW 工具链；qtmultimedia 不在默认模块集内，需显式安装。
-      - name: Install Qt 6.9.2 (MinGW)
+      # Qt 6.9.2 mingw_64 + 配套 MinGW 13.1.0 工具链（tools_mingw1310，
+      # 与本地 E:\Qt\Tools\mingw1310_64 一致；不要用 tools_mingw，它包含
+      # 4.7-8.1 全系旧工具链且版本不匹配）。qtmultimedia 不在默认模块集内。
+      - name: Install Qt 6.9.2 (MinGW 13.1.0)
         uses: jurplel/install-qt-action@v4
         with:
           version: '6.9.2'
           arch: 'win64_mingw'
           modules: 'qtmultimedia'
-          tools: 'tools_mingw'
+          tools: 'tools_mingw1310'
           cache: true
 
       # onnxruntime.dll 不入库（见 .gitignore vendor/onnxruntime/bin/），
@@ -38,16 +40,24 @@ jobs:
       - name: Configure (Ninja + MinGW)
         shell: pwsh
         run: |
-          $qtToolsRoot = Split-Path -Parent (Split-Path -Parent $env:Qt6_DIR)
+          # 兼容 install-qt-action 不同版本的环境变量命名
+          $qtDir = $env:Qt6_DIR
+          if (-not $qtDir) { $qtDir = $env:QT_ROOT_DIR }
+          if (-not $qtDir) { throw '未找到 Qt 根目录（Qt6_DIR / QT_ROOT_DIR 均为空）' }
+          $qtToolsRoot = $env:IQTA_TOOLS
+          if (-not $qtToolsRoot) {
+            $qtToolsRoot = Split-Path -Parent (Split-Path -Parent $qtDir)
+          }
           $gcc = Get-ChildItem -Path $qtToolsRoot -Filter 'g++.exe' -Recurse -ErrorAction SilentlyContinue |
                  Where-Object { $_.FullName -match 'mingw.*_64' } |
+                 Sort-Object FullName -Descending |
                  Select-Object -First 1 -ExpandProperty FullName
           if (-not $gcc) { throw "未在 $qtToolsRoot 下找到 64 位 MinGW g++" }
           $gccDir = Split-Path -Parent $gcc
           # 为后续步骤的测试子进程补齐 MinGW 运行时与 Qt DLL 路径
           $gccDir | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-          "$env:Qt6_DIR\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-          cmake -S . -B build -G Ninja "-DCMAKE_PREFIX_PATH=$env:Qt6_DIR" `
+          "$qtDir\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          cmake -S . -B build -G Ninja "-DCMAKE_PREFIX_PATH=$qtDir" `
             "-DCMAKE_C_COMPILER=$gccDir\gcc.exe" "-DCMAKE_CXX_COMPILER=$gcc"
 
       - name: Build (Debug)
