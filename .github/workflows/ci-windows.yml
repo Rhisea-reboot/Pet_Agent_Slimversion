@@ -69,13 +69,18 @@ jobs:
 
       # 行尾空白门禁：vendor 前端资源保持上游原样，排除在外；
       # 使用 -P (PCRE)，避免 Windows 版 git 在 -E/-basic 下对 $ 锚点的误报。
+      # 注意：pwsh 7.5+ 默认 $PSNativeCommandUseErrorActionPreference=$true，
+      # git grep「无匹配→退出码 1」会被 runner 升级为终止错误，导致本步
+      # 即使无违规也失败；故显式关闭该开关，并改用输出内容而非退出码判断。
       - name: Whitespace gate (no trailing whitespace)
         shell: pwsh
         run: |
-          $hits = git grep -n -I -P '[ \t]+$' -- '*.cpp' '*.h' '*.md' '*.ps1' '*.json' '*.cmake' '*.qrc' '*.js' '*.html' '*.css' '*.yml' '*.yaml' 'CMakeLists.txt' ':(exclude)resources/dag_editor/vendor' 2>$null
-          if ($LASTEXITCODE -eq 0) {
+          $PSNativeCommandUseErrorActionPreference = $false
+          $hits = @(git grep -n -I -P '[ \t]+$' -- '*.cpp' '*.h' '*.md' '*.ps1' '*.json' '*.cmake' '*.qrc' '*.js' '*.html' '*.css' '*.yml' '*.yaml' 'CMakeLists.txt' ':(exclude)resources/dag_editor/vendor' 2>$null)
+          if ($hits.Count -gt 0) {
             Write-Host $hits
             Write-Host '::error::发现行尾空白（trailing whitespace），请清理后重试。'
             exit 1
           }
           Write-Host '通过：跟踪文本文件无行尾空白。'
+          exit 0
