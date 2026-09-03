@@ -1,6 +1,7 @@
 #ifndef VPET_MAIN_WINDOW_H
 #define VPET_MAIN_WINDOW_H
 
+#include "vpet/pet_config.h"
 #include "vpet/pet_controller.h"
 #include "vpet/stream_sentence_splitter.h"
 
@@ -13,6 +14,7 @@
 #include <QWidget>
 
 class QMenu;
+class QSlider;
 class QSystemTrayIcon;
 
 namespace vpet
@@ -287,6 +289,36 @@ private:
     void UpdateHitRegions(const QSize &imageSize);
 
     /**
+     * @brief 获取当前显示宽度（基准宽度 × 显示缩放）
+     * @return 实际显示宽度（像素）
+     */
+    int EffectiveDisplayWidth() const;
+
+    /**
+     * @brief 应用显示缩放并保持脚底中点锚点
+     *
+     * 按新缩放重取当前帧、更新帧尺寸与命中区域，随后调整窗口位置使宠物
+     * 脚底中点不动，并经屏幕钳制后通知气泡跟随。
+     *
+     * @param[in] scale 缩放系数，越界值会被钳制；与当前值相同则忽略
+     */
+    void ApplyDisplayScale(float scale);
+
+    /**
+     * @brief 加载 pet_config.json 并应用音量与显示缩放
+     *
+     * 文件缺失或非法时使用默认值；须在首帧渲染前调用。
+     */
+    void LoadPetSettings();
+
+    /**
+     * @brief 将当前音量与显示缩放写回 pet_config.json
+     *
+     * 与最近一次读/写内容一致时不写盘。
+     */
+    void SavePetSettings();
+
+    /**
      * @brief 将窗口居中到主屏幕
      */
     void CenterOnScreen();
@@ -307,6 +339,9 @@ private:
     DagEditorServer *m_dagEditorServer;   ///< DAG 可视化编辑器服务（懒创建）
     QSize m_currentImageSize;             ///< 当前图片尺寸
     QString m_lastFramePath;              ///< 最近一次已加载的帧路径（避免重复磁盘 I/O）
+    float m_displayScale;                 ///< 桌宠显示缩放（0.5 ~ 2.0，1.0 为基准）
+    PetConfig m_lastSavedPetConfig;       ///< 最近一次读取/写入的桌宠配置（写盘脏检查）
+    QString m_petConfigPath;              ///< pet_config.json 路径；为空时保存到可执行文件目录
     bool m_isVoiceHotkeyRegistered;        ///< 系统全局语音热键是否已注册
     bool m_isScreenPerceptionEnabled;      ///< 屏幕感知（截图上传）是否开启，默认关闭
     bool m_isExiting;                      ///< 是否已经请求应用程序退出

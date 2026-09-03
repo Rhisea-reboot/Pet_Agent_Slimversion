@@ -172,6 +172,21 @@ public:
     /** @brief 判断指定请求是否已进入流式播放链路。 */
     bool IsStreamingRequest(int requestId) const;
 
+    /**
+     * @brief 设置语音播放音量
+     *
+     * 同时作用于传统 Say 与流式对话两条播放链路（共用同一播放器）。
+     *
+     * @param[in] volume 音量，0.0（静音）~ 1.0，越界值会被钳制
+     */
+    void SetVoiceVolume(float volume);
+
+    /**
+     * @brief 获取语音播放音量
+     * @return 音量，0.0 ~ 1.0
+     */
+    float GetVoiceVolume() const;
+
 signals:
     /**
      * @brief 当前帧变化信号

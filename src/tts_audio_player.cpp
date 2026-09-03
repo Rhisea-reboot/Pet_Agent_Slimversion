@@ -98,11 +98,30 @@ bool TtsAudioPlayer::Play(const QString &filePath)
     Stop();
 
     m_mediaPlayer->setSource(QUrl::fromLocalFile(fileInfo.absoluteFilePath()));
-    m_audioOutput->setVolume(1.0f);
     m_mediaPlayer->play();
 
     qDebug() << "[TTS]   playback started";
     return true;
+}
+
+void TtsAudioPlayer::SetVolume(float volume)
+{
+    if (m_audioOutput == nullptr)
+    {
+        return;
+    }
+
+    m_audioOutput->setVolume(qBound(0.0f, volume, 1.0f));
+}
+
+float TtsAudioPlayer::GetVolume() const
+{
+    if (m_audioOutput == nullptr)
+    {
+        return 1.0f;
+    }
+
+    return m_audioOutput->volume();
 }
 
 void TtsAudioPlayer::Stop()

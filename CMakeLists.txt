@@ -57,6 +57,7 @@ set(VPET_SOURCES
     src/animation_resource_manager.cpp
     src/pet_state_machine.cpp
     src/pet_controller.cpp
+    src/pet_config.cpp
     src/bubble_message.cpp
     src/hit_region.cpp
     src/say_dialog.cpp
@@ -117,6 +118,7 @@ set(VPET_HEADERS
     include/vpet/animation_resource_manager.h
     include/vpet/pet_state_machine.h
     include/vpet/pet_controller.h
+    include/vpet/pet_config.h
     include/vpet/bubble_message.h
     include/vpet/hit_region.h
     include/vpet/say_dialog.h
@@ -517,6 +519,27 @@ if(BUILD_TESTING)
     set_property(TARGET stream_sentence_splitter_tests PROPERTY AUTOMOC_COMPILER_PREDEFINES OFF)
 
     add_test(NAME stream_sentence_splitter_tests COMMAND stream_sentence_splitter_tests)
+
+    add_executable(pet_config_tests
+        tests/pet_config_test.cpp
+        src/pet_config.cpp
+        include/vpet/pet_config.h
+    )
+
+    target_include_directories(pet_config_tests
+        PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/include
+    )
+
+    target_link_libraries(pet_config_tests
+        PRIVATE
+            Qt6::Core
+            Qt6::Test
+    )
+
+    set_property(TARGET pet_config_tests PROPERTY AUTOMOC_COMPILER_PREDEFINES OFF)
+
+    add_test(NAME pet_config_tests COMMAND pet_config_tests)
 
     add_executable(agent_runtime_scheduler_tests
         tests/agent_runtime_scheduler_test.cpp

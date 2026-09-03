@@ -39,6 +39,18 @@ public:
     bool Play(const QString &filePath);
 
     /**
+     * @brief 设置播放音量
+     * @param[in] volume 音量，0.0（静音）~ 1.0，越界值会被钳制
+     */
+    void SetVolume(float volume);
+
+    /**
+     * @brief 获取当前播放音量
+     * @return 音量，0.0 ~ 1.0
+     */
+    float GetVolume() const;
+
+    /**
      * @brief 停止当前播放
      */
     void Stop();

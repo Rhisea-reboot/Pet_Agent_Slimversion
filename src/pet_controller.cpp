@@ -396,6 +396,19 @@ bool PetController::IsStreamingRequest(int requestId) const
            && (m_streamCoordinator->ActiveRequestId() == requestId);
 }
 
+void PetController::SetVoiceVolume(float volume)
+{
+    if (m_ttsAudioPlayer != nullptr)
+    {
+        m_ttsAudioPlayer->SetVolume(volume);
+    }
+}
+
+float PetController::GetVoiceVolume() const
+{
+    return (m_ttsAudioPlayer != nullptr) ? m_ttsAudioPlayer->GetVolume() : 1.0f;
+}
+
 void PetController::OnUpdate()
 {
     m_stateMachine.Update(UPDATE_INTERVAL_MS);

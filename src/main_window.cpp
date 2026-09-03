@@ -17,12 +17,15 @@
 #include <QDesktopServices>
 #include <QDir>
 #include <QGuiApplication>
+#include <QHBoxLayout>
 #include <QIcon>
 #include <QMenu>
+#include <QSlider>
 #include <QStyle>
 #include <QSystemTrayIcon>
 #include <QPixmapCache>
 #include <QScreen>
+#include <QWidgetAction>
 
 #ifdef Q_OS_WIN
 #include <qt_windows.h>
@@ -39,6 +42,65 @@ constexpr int TARGET_DISPLAY_WIDTH = 300; ///< 宠物显示宽度，按原图比
 constexpr int SCREENSHOT_INTERVAL_MS = 3000; ///< 自动截图间隔
 constexpr int SAY_BUBBLE_DURATION_MS = 5000; ///< Say 气泡固定显示时长
 constexpr int VOICE_HOTKEY_ID = 0x56504554;
+constexpr int MENU_SLIDER_WIDTH_PX = 160;    ///< 菜单内嵌滑条宽度
+constexpr int MENU_SLIDER_VALUE_LABEL_WIDTH_PX = 40; ///< 滑条数值标签最小宽度
+
+/**
+ * @brief 构建右键菜单内嵌滑条行（标签 + 滑条 + 数值）
+ *
+ * 数值以整数百分比显示并随拖动实时刷新；滑条本身不关闭菜单。
+ *
+ * @param[in] menu 所属菜单
+ * @param[in] title 行标题
+ * @param[in] minValue 滑条最小值
+ * @param[in] maxValue 滑条最大值
+ * @param[in] tickInterval 刻度间隔
+ * @param[in] initialValue 初始值
+ * @return 滑条指针，供外部连接 valueChanged / sliderReleased 信号
+ */
+QSlider *CreateMenuSlider(QMenu *menu,
+                          const QString &title,
+                          int minValue,
+                          int maxValue,
+                          int tickInterval,
+                          int initialValue)
+{
+    QWidget *row = new QWidget(menu);
+    QHBoxLayout *layout = new QHBoxLayout(row);
+    layout->setContentsMargins(12, 4, 12, 4);
+    layout->setSpacing(8);
+
+    QLabel *titleLabel = new QLabel(title, row);
+
+    QSlider *slider = new QSlider(Qt::Horizontal, row);
+    slider->setRange(minValue, maxValue);
+    slider->setValue(initialValue);
+    slider->setTickPosition(QSlider::TicksBelow);
+    slider->setTickInterval(tickInterval);
+    slider->setFixedWidth(MENU_SLIDER_WIDTH_PX);
+
+    QLabel *valueLabel = new QLabel(row);
+    valueLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    valueLabel->setMinimumWidth(MENU_SLIDER_VALUE_LABEL_WIDTH_PX);
+
+    const auto updateValueLabel = [slider, valueLabel]()
+    {
+        valueLabel->setText(QStringLiteral("%1%").arg(slider->value()));
+    };
+
+    updateValueLabel();
+    QObject::connect(slider, &QSlider::valueChanged, row, updateValueLabel);
+
+    layout->addWidget(titleLabel);
+    layout->addWidget(slider);
+    layout->addWidget(valueLabel);
+
+    QWidgetAction *action = new QWidgetAction(menu);
+    action->setDefaultWidget(row);
+    menu->addAction(action);
+
+    return slider;
+}
 
 } // anonymous namespace
 
@@ -58,6 +120,9 @@ MainWindow::MainWindow(QWidget *parent)
     , m_dagEditorServer(nullptr)
     , m_currentImageSize()
     , m_lastFramePath()
+    , m_displayScale(PET_DISPLAY_SCALE_DEFAULT)
+    , m_lastSavedPetConfig()
+    , m_petConfigPath()
     , m_isVoiceHotkeyRegistered(false)
     , m_isScreenPerceptionEnabled(false)
     , m_isExiting(false)
@@ -142,6 +207,9 @@ bool MainWindow::Initialize(const QString &animationBasePath)
             this, &MainWindow::OnSayStarted);
     connect(m_controller, &PetController::SayTextReady,
             this, &MainWindow::OnSayTextReady);
+
+    // 在首帧渲染前加载音量/缩放配置，使首帧即按配置的缩放绘制。
+    LoadPetSettings();
 
     // 创建聊天气泡窗口（独立顶层窗口，用于 IPC 式通信）
     m_chatBubbleWindow = new ChatBubbleWindow(nullptr);
@@ -380,13 +448,18 @@ void MainWindow::OnFrameChanged(const QString &framePath)
         return;
     }
 
-    if ((framePath == m_lastFramePath) && m_currentImageSize.isValid())
+    const int displayWidth = EffectiveDisplayWidth();
+
+    // 同帧路径但显示宽度不同（缩放变化）时不能早退，需按新宽度重新取图。
+    if ((framePath == m_lastFramePath)
+        && m_currentImageSize.isValid()
+        && (m_currentImageSize.width() == displayWidth))
     {
         return;
     }
 
     const QString cacheKey = QStringLiteral("vpet_frame_%1_%2")
-                                 .arg(TARGET_DISPLAY_WIDTH)
+                                 .arg(displayWidth)
                                  .arg(framePath);
 
     QPixmap displayPixmap;
@@ -401,7 +474,7 @@ void MainWindow::OnFrameChanged(const QString &framePath)
         }
 
         displayPixmap = originalPixmap.scaledToWidth(
-            TARGET_DISPLAY_WIDTH, Qt::SmoothTransformation);
+            displayWidth, Qt::SmoothTransformation);
         QPixmapCache::insert(cacheKey, displayPixmap);
     }
 
@@ -481,6 +554,112 @@ void MainWindow::UpdateHitRegions(const QSize &imageSize)
     m_controller->SetHitRegions(headRegion, bodyRegion, dragRegion);
 }
 
+int MainWindow::EffectiveDisplayWidth() const
+{
+    return qRound(TARGET_DISPLAY_WIDTH * m_displayScale);
+}
+
+void MainWindow::ApplyDisplayScale(float scale)
+{
+    scale = qBound(PET_DISPLAY_SCALE_MIN, scale, PET_DISPLAY_SCALE_MAX);
+
+    if (qFuzzyCompare(scale, m_displayScale))
+    {
+        return;
+    }
+
+    const QSize oldSize = m_currentImageSize;
+    const QPoint oldPosition = (m_controller != nullptr)
+                                   ? m_controller->GetPosition()
+                                   : QPoint();
+
+    m_displayScale = scale;
+
+    // 同帧路径但宽度已变化，OnFrameChanged 会按新宽度重新取图并更新帧尺寸、
+    // 命中区域与感知指示灯位置。
+    if (!m_lastFramePath.isEmpty())
+    {
+        OnFrameChanged(m_lastFramePath);
+    }
+
+    // 保持脚底中点不动，避免缩放时宠物向右上漂移；SetPosition 内部会做屏幕
+    // 钳制，并经 PositionChanged 让气泡立即按新尺寸跟随。
+    if ((m_controller != nullptr) && oldSize.isValid())
+    {
+        const QSize newSize = m_currentImageSize;
+        const QPoint anchoredPosition(oldPosition.x()
+                                          + (oldSize.width() - newSize.width()) / 2,
+                                      oldPosition.y()
+                                          + (oldSize.height() - newSize.height()));
+
+        m_controller->SetPosition(anchoredPosition);
+    }
+}
+
+void MainWindow::LoadPetSettings()
+{
+    PetConfig config;
+    const QString configPath = FindPetConfigPath();
+    QString errorMessage;
+
+    if (!configPath.isEmpty()
+        && !LoadPetConfig(configPath, config, errorMessage))
+    {
+        qWarning() << "[PetConfig] Failed to load" << configPath
+                   << ":" << errorMessage << "- using defaults.";
+    }
+
+    m_petConfigPath = configPath;
+    m_lastSavedPetConfig = config;
+
+    if (m_controller != nullptr)
+    {
+        m_controller->SetVoiceVolume(config.volume);
+    }
+
+    // 此时首帧尚未渲染，仅记录缩放值，OnFrameChanged 首次贴图时按该值缩放。
+    m_displayScale = config.displayScale;
+
+    qDebug() << "[PetConfig] volume:" << config.volume
+             << "display scale:" << config.displayScale
+             << (configPath.isEmpty() ? QStringLiteral("(defaults)")
+                                      : QStringLiteral("from %1").arg(configPath));
+}
+
+void MainWindow::SavePetSettings()
+{
+    PetConfig config;
+
+    config.volume = (m_controller != nullptr) ? m_controller->GetVoiceVolume()
+                                              : PET_VOLUME_DEFAULT;
+    config.displayScale = m_displayScale;
+
+    if (config == m_lastSavedPetConfig)
+    {
+        return;
+    }
+
+    QString savePath = m_petConfigPath;
+
+    if (savePath.isEmpty())
+    {
+        savePath = QDir(QCoreApplication::applicationDirPath())
+                       .filePath(PET_CONFIG_FILE_NAME);
+    }
+
+    QString errorMessage;
+
+    if (!SavePetConfig(savePath, config, errorMessage))
+    {
+        qWarning() << "[PetConfig] Failed to save" << savePath
+                   << ":" << errorMessage;
+        return;
+    }
+
+    m_lastSavedPetConfig = config;
+    qDebug() << "[PetConfig] Saved" << savePath;
+}
+
 void MainWindow::CenterOnScreen()
 {
     const QScreen *screen = QGuiApplication::primaryScreen();
@@ -494,8 +673,8 @@ void MainWindow::CenterOnScreen()
     const QPoint center = screenGeometry.center();
 
     const QSize frameSize = m_currentImageSize.isValid()
-                            ? m_currentImageSize
-                            : QSize(TARGET_DISPLAY_WIDTH, TARGET_DISPLAY_WIDTH);
+                                ? m_currentImageSize
+                                : QSize(EffectiveDisplayWidth(), EffectiveDisplayWidth());
 
     const QPoint position(center.x() - (frameSize.width() / 2),
                           center.y() - (frameSize.height() / 2));
@@ -805,6 +984,62 @@ void MainWindow::ShowPetContextMenu(const QPoint &globalPosition)
             }
         }
     }
+
+    menu.addSeparator();
+
+    // 音量拖动中实时生效；大小松手生效，避免拖动过程中逐档重缩放与重锚定。
+    const float currentVolume = (m_controller != nullptr)
+                                    ? m_controller->GetVoiceVolume()
+                                    : PET_VOLUME_DEFAULT;
+
+    QSlider *volumeSlider = CreateMenuSlider(&menu,
+                                             QStringLiteral("音量"),
+                                             qRound(PET_VOLUME_MIN * 100.0f),
+                                             qRound(PET_VOLUME_MAX * 100.0f),
+                                             25,
+                                             qRound(currentVolume * 100.0f));
+
+    QSlider *sizeSlider = CreateMenuSlider(&menu,
+                                           QStringLiteral("宠物大小"),
+                                           qRound(PET_DISPLAY_SCALE_MIN * 100.0f),
+                                           qRound(PET_DISPLAY_SCALE_MAX * 100.0f),
+                                           25,
+                                           qRound(m_displayScale * 100.0f));
+
+    if (volumeSlider != nullptr)
+    {
+        connect(volumeSlider, &QSlider::valueChanged, this, [this](int value)
+        {
+            if (m_controller != nullptr)
+            {
+                m_controller->SetVoiceVolume(value / 100.0f);
+            }
+        });
+    }
+
+    if (sizeSlider != nullptr)
+    {
+        connect(sizeSlider, &QSlider::sliderReleased, this, [this, sizeSlider]()
+        {
+            ApplyDisplayScale(sizeSlider->value() / 100.0f);
+        });
+    }
+
+    // 关闭菜单时统一兜底提交（Esc 关闭等场景 sliderReleased 不触发），并按需写盘。
+    connect(&menu, &QMenu::aboutToHide, this, [this, volumeSlider, sizeSlider]()
+    {
+        if ((m_controller != nullptr) && (volumeSlider != nullptr))
+        {
+            m_controller->SetVoiceVolume(volumeSlider->value() / 100.0f);
+        }
+
+        if (sizeSlider != nullptr)
+        {
+            ApplyDisplayScale(sizeSlider->value() / 100.0f);
+        }
+
+        SavePetSettings();
+    });
 
     menu.addSeparator();
 

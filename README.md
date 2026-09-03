@@ -336,6 +336,8 @@ conversation.history      对话历史
 
 编辑 `tts_config.json`（`server_*` 服务地址、`voice` 音色、`speed` 语速、`lang` 语种）。启动时会尝试拉起本地 Kokoro TTS 服务（`tools/kokoro/kokoro_server.py`，监听 `127.0.0.1:9880`）；Python 环境缺失或服务失败时桌宠仍可运行，说话退化为仅文字气泡。
 
+播报音量在右键菜单的 **音量** 滑条中调节（本地播放侧控制，与 TTS 服务无关），设置持久化到 `pet_config.json`。
+
 首次使用需准备语音环境：
 
 1. 运行 `setup_slim_runtime.bat` 创建 `runtime/` venv（安装 Kokoro、sherpa-onnx、torch CPU 版等）
@@ -409,11 +411,12 @@ copy memory_config.example.json memory_config.json
 | `web_search_config.json` | 联网研究（配合本地 daemon） | 联网研究需要 |
 | `memory_config.json` | 长期记忆（含维护/embedding 配置） | 可选，缺失时记忆节点空转 |
 | `runtime/` + `tts_config.json` | 语音播报（Kokoro TTS） | 可选，缺失时退化为文字气泡 |
+| `pet_config.json` | 桌宠音量与显示大小（右键菜单调整后自动生成） | 否 |
 | `runtime/` + `models/sensevoice/` | 语音输入（SenseVoice 转写） | 可选，缺失时语音输入报错 |
 | `context.md` | 桌宠人设（系统提示词） | 可选 |
 
 首次部署语音环境：先运行 `setup_slim_runtime.bat` 创建 `runtime/` venv，再运行
-`tools/asr/download_sensevoice.py` 下载 ASR 模型到 `models/sensevoice/`（约 228 MB）。
+`tools/asr/download_sensevoice.py` 下载 ASR 模型到 `models/sensevoice/`（默认全精度约 938 MB；如需省空间可加 `--int8` 下载约 228 MB 的量化版）。
 
 可选能力：
 
@@ -444,7 +447,11 @@ copy memory_config.example.json memory_config.json
 - **Ctrl+Alt+V 语音输入**：等同于快捷键，见[语音输入](#4-语音输入)
 - **屏幕感知（截图）**：复选框，开关屏幕感知（默认关闭）
 - **图像识别模型设置**：`mimo-v2.5` / `gpt` 档位切换（仅当视觉 LLM 已配置时出现）
+- **音量**：拖动滑条实时调节 TTS 播报音量（0% 为静音），同时作用于气泡播报与流式播报
+- **宠物大小**：拖动滑条调节桌宠显示大小（50%–200%，松手生效），缩放时保持脚底位置不动
 - **退出程序**：停止录音和屏幕感知管道后正常退出应用
+
+音量与宠物大小会即时保存到 `pet_config.json`（首次调整时自动生成），重启后保留。
 
 程序启动后会在 Windows 系统托盘显示 VPet 图标。双击托盘图标或选择托盘菜单中的
 **显示桌宠**可以重新显示并激活桌宠窗口；托盘菜单中的 **退出程序** 与右键菜单使用相同的退出流程。
@@ -501,6 +508,7 @@ copy memory_config.example.json memory_config.json
 | 本地向量检索开关 | `memory_config.json` → `embedding.enabled`（模型用 `scripts/download_bge_model.ps1` 下载到 `models/embedding/`） |
 | 文本/视觉模型与 API Key | `llm_config.json` / `vision_llm_config.json` |
 | TTS 音色 / 语速 / 语种 | `tts_config.json`（`voice` / `speed` / `lang`） |
+| 播报音量 / 桌宠大小 | 右键菜单 **音量** / **宠物大小** 滑条（自动持久化到 `pet_config.json`） |
 | 语音输入 ASR 模型 | `tools/asr/download_sensevoice.py`（下载到 `models/sensevoice/`） |
 
 所有 JSON 修改重启程序生效。另见[提示词修改指南](#6-提示词修改指南)。
