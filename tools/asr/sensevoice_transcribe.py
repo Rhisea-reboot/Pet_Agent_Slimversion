@@ -3,7 +3,7 @@
 用法:
     python tools/asr/sensevoice_transcribe.py -i <输入文件或目录> -o <输出目录> -m <模型目录>
 
-- 模型: SenseVoiceSmall int8 ONNX（sherpa-onnx），支持中/英/日/韩/粤混合识别
+- 模型: SenseVoiceSmall ONNX（sherpa-onnx），优先全精度 model.onnx，回退 int8；支持中/英/日/韩/粤混合识别
 - 输入: WAV（任意采样率/声道，内部 numpy 重采样到 16kHz 单声道 float32）
 - 输出: <输出目录>/result.txt
     单文件输入 -> 一行纯文本（可能为空行）
@@ -26,7 +26,10 @@ TARGET_RATE = 16000
 def _load_recognizer(model_dir: Path):
     import sherpa_onnx
 
-    onnx = model_dir / "model.int8.onnx"
+    # 优先使用全精度 model.onnx（精度更高）；没有时回退到 int8 量化模型。
+    onnx = model_dir / "model.onnx"
+    if not onnx.is_file():
+        onnx = model_dir / "model.int8.onnx"
     tokens = model_dir / "tokens.txt"
     if not onnx.is_file() or not tokens.is_file():
         raise FileNotFoundError(

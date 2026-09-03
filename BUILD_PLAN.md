@@ -123,12 +123,12 @@ Pet Agent slimVersion/
 
 ## 5. 轻量化 ASR：SenseVoiceSmall（中英混合）
 
-> 决策记录：原计划用 Vosk small-cn（42MB），实测 **Vosk 单语模型无法处理中英夹杂**——中文模型把 "Hello world" 转成 "为了 我 而"，英文模型把中文句毁掉；双模型按置信度选也只对纯单语句有效。故改用 **SenseVoiceSmall**（sherpa-onnx int8，228MB，CPU 实时），支持中/英/日/韩/粤**句内混合**识别，中文精度也显著高于 vosk small。
+> 决策记录：原计划用 Vosk small-cn（42MB），实测 **Vosk 单语模型无法处理中英夹杂**——中文模型把 "Hello world" 转成 "为了 我 而"，英文模型把中文句毁掉；双模型按置信度选也只对纯单语句有效。故改用 **SenseVoiceSmall**（sherpa-onnx，CPU 实时），支持中/英/日/韩/粤**句内混合**识别，中文精度也显著高于 vosk small。默认使用全精度 `model.onnx`（约 938MB）以避免 int8 量化损失；需要省空间时可用 `--int8` 下载约 228MB 的量化版。
 
 ### 5.1 依赖与模型
 
 - Python 包：`sherpa-onnx`（1.13+，自带 onnxruntime），与 Kokoro 共用 `runtime/` venv。
-- 模型：`csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17` 的 `model.int8.onnx`（228MB）+ `tokens.txt`，`tools/asr/download_sensevoice.py` 负责经 HF 镜像下载到 `models/sensevoice/`。
+- 模型：`csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17` 的 `model.onnx`（全精度，约 938MB）或 `model.int8.onnx`（量化，约 228MB）+ `tokens.txt`，`tools/asr/download_sensevoice.py` 负责经 HF 镜像下载到 `models/sensevoice/`。
 - 推理：`sherpa_onnx.OfflineRecognizer.from_sense_voice(model, tokens, use_itn=True)`；ITN 自动补标点与数字规范化（"二零二四年"→"2024年"）。
 
 ### 5.2 sensevoice_transcribe.py 契约
