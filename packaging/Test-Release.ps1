@@ -26,13 +26,23 @@ $requiredFiles = @(
     "platforms\qwindows.dll",
     "tools\kokoro\kokoro_server.py",
     "tools\asr\sensevoice_transcribe.py",
-    "models\sensevoice\model.int8.onnx",
     "models\sensevoice\tokens.txt"
 )
 
 $missing = @($requiredFiles | Where-Object { -not (Test-Path -LiteralPath (Join-Path $ReleaseDirectory $_)) })
 if ($missing.Count -gt 0) {
     throw ("Release self-check failed. Missing:`n" + ($missing -join [Environment]::NewLine))
+}
+
+# SenseVoice 模型允许全精度 model.onnx 或 int8 model.int8.onnx 二选一。
+$senseVoiceModelCandidates = @(
+    "models\sensevoice\model.onnx",
+    "models\sensevoice\model.int8.onnx"
+)
+$hasSenseVoiceModel = @($senseVoiceModelCandidates |
+    Where-Object { Test-Path -LiteralPath (Join-Path $ReleaseDirectory $_) }).Count -gt 0
+if (-not $hasSenseVoiceModel) {
+    throw "Release self-check failed. Missing: models\sensevoice\model.onnx or model.int8.onnx"
 }
 
 if ($EmbeddingIncluded) {

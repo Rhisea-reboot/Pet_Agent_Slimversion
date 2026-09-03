@@ -114,7 +114,22 @@ $BuildDirectory = [System.IO.Path]::GetFullPath($BuildDirectory)
 $OutputDirectory = [System.IO.Path]::GetFullPath($OutputDirectory)
 $InstallerDirectory = [System.IO.Path]::GetFullPath($InstallerDirectory)
 
-foreach ($path in @($QtPrefix, $qtDeploy, $qtCmake, $ninja, $mingwBin, $qtConfigDir, (Join-Path $root "Animation"), (Join-Path $root "runtime"), (Join-Path $root "tools\kokoro\kokoro_server.py"), (Join-Path $root "tools\asr\sensevoice_transcribe.py"), (Join-Path $root "models\sensevoice\model.int8.onnx"), (Join-Path $root "models\sensevoice\tokens.txt"), (Join-Path $root "tts_config.json"))) {
+# 优先打包全精度 model.onnx；若用户只下载了 int8，则回退打包 model.int8.onnx。
+$senseVoiceModel = Join-Path $root "models\sensevoice\model.onnx"
+if (-not (Test-Path -LiteralPath $senseVoiceModel)) {
+    $senseVoiceModel = Join-Path $root "models\sensevoice\model.int8.onnx"
+}
+if (-not (Test-Path -LiteralPath $senseVoiceModel)) {
+    throw "Required release input is missing: models\sensevoice\model.onnx (or model.int8.onnx)"
+}
+
+# 全精度 SenseVoice 模型约 938MB，会使 core（不含 runtime）超过原来的 1000 MiB 上限。
+if ((Split-Path -Leaf $senseVoiceModel) -eq "model.onnx" -and $CoreSizeLimitMiB -lt 1600) {
+    Write-Verbose "Raising core size limit to 1600 MiB because the full-precision SenseVoice model is bundled."
+    $CoreSizeLimitMiB = 1600
+}
+
+foreach ($path in @($QtPrefix, $qtDeploy, $qtCmake, $ninja, $mingwBin, $qtConfigDir, (Join-Path $root "Animation"), (Join-Path $root "runtime"), (Join-Path $root "tools\kokoro\kokoro_server.py"), (Join-Path $root "tools\asr\sensevoice_transcribe.py"), $senseVoiceModel, (Join-Path $root "models\sensevoice\tokens.txt"), (Join-Path $root "tts_config.json"))) {
     if (-not (Test-Path -LiteralPath $path)) { throw "Required release input is missing: $path" }
 }
 if ($IncludeKokoroWeights) {
@@ -168,7 +183,12 @@ New-Item -ItemType Directory -Path $OutputDirectory | Out-Null
 Copy-Item -LiteralPath $exePath -Destination (Join-Path $OutputDirectory "VPet.exe") -Force
 
 Copy-Item -LiteralPath (Join-Path $root "tools") -Destination (Join-Path $OutputDirectory "tools") -Recurse -Force
-Copy-Item -LiteralPath (Join-Path $root "models\sensevoice") -Destination (Join-Path $OutputDirectory "models\sensevoice") -Recurse -Force
+
+# 只打包当前选中的 SenseVoice 模型文件（全精度或 int8），不把 .cache/两个模型都带进发行包。
+$senseVoiceDst = Join-Path $OutputDirectory "models\sensevoice"
+New-Item -ItemType Directory -Path $senseVoiceDst -Force | Out-Null
+Copy-Item -LiteralPath $senseVoiceModel -Destination (Join-Path $senseVoiceDst (Split-Path -Leaf $senseVoiceModel)) -Force
+Copy-Item -LiteralPath (Join-Path $root "models\sensevoice\tokens.txt") -Destination (Join-Path $senseVoiceDst "tokens.txt") -Force
 
 # onnxruntime 运行时 DLL：EmbeddingClient 从可执行文件目录动态加载；
 # 无 embedding 模型时静默回退为关键词检索，因此始终随包分发。
