@@ -8,20 +8,26 @@
       }
     },
     {
-      "id": "web_research",
-      "type": "web.research",
+      "id": "memory_retrieve",
+      "type": "memory.retrieve",
+      "config": {}
+    },
+    {
+      "id": "tool_loop",
+      "type": "tool.loop",
       "config": {
-        "mode": "auto",
-        "failure_policy": "continue",
-        "max_search_rounds": 3,
-        "max_queries_per_round": 2,
-        "max_total_results": 8,
-        "max_context_chars": 6000,
-        "total_deadline_ms": 15000,
-        "async_timeout_ms": 17000,
-        "require_citations_for_realtime_claims": true,
-        "require_independent_sources_for_high_impact_claims": true,
-        "engines": ["bing"]
+        "tools": ["web.search", "memory.search", "screen.describe"],
+        "max_rounds": 4,
+        "time_budget_ms": 20000,
+        "max_tool_calls": 12,
+        "tool_timeout_ms": 10000,
+        "permission": "auto_readonly",
+        "on_budget_exhausted": "answer_with_context",
+        "fallback": "plain_chat",
+        "async_timeout_ms": 60000,
+        "merge": {
+          "semantic.text.prompt": "prefer_user"
+        }
       }
     },
     {
@@ -49,20 +55,6 @@
       }
     },
     {
-      "id": "memory_retrieve",
-      "type": "memory.retrieve",
-      "config": {}
-    },
-    {
-      "id": "call_llm",
-      "type": "llm.chat",
-      "config": {
-        "temperature": 0.7,
-        "max_tokens": 2048,
-        "stream": true
-      }
-    },
-    {
       "id": "emotion_rewrite",
       "type": "emotion.rewrite",
       "config": {}
@@ -79,14 +71,13 @@
     }
   ],
   "edges": [
-    { "from": "user_input", "to": "web_research" },
-    { "from": "web_research", "to": "memory_retrieve" },
-    { "from": "memory_retrieve", "to": "call_llm" },
+    { "from": "user_input", "to": "memory_retrieve" },
+    { "from": "memory_retrieve", "to": "tool_loop" },
+    { "from": "tool_loop", "to": "emotion_rewrite" },
+    { "from": "emotion_rewrite", "to": "format_output" },
+    { "from": "format_output", "to": "memory_store" },
     { "from": "vision_input", "to": "vision_llm" },
     { "from": "vision_llm", "to": "proactive_topic" },
-    { "from": "proactive_topic", "to": "call_llm" },
-    { "from": "call_llm", "to": "emotion_rewrite" },
-    { "from": "emotion_rewrite", "to": "format_output" },
-    { "from": "format_output", "to": "memory_store" }
+    { "from": "proactive_topic", "to": "tool_loop" }
   ]
 }

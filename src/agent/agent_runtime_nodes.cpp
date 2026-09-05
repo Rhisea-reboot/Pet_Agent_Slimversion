@@ -5,6 +5,7 @@
 #include "vpet/agent/memory_retrieve_node.h"
 #include "vpet/agent/memory_store_node.h"
 #include "vpet/agent/proactive_topic_node.h"
+#include "vpet/agent/tool_loop_node.h"
 #include "vpet/agent/web_research_node.h"
 #include "vpet/llm/llm_client.h"
 #include "vpet/web/web_research_engine.h"
@@ -587,6 +588,55 @@ bool AgentRuntime::ExecuteWebResearchNode(const _tagAgentDagNode &node,
     return true;
 }
 
+bool AgentRuntime::ExecuteToolLoopNode(const _tagAgentDagNode &node,
+                                       AgentContext &context,
+                                       QString &errorMessage)
+{
+    if (node.id.trimmed().isEmpty())
+    {
+        errorMessage = QStringLiteral("Agent tool.loop node id is empty.");
+        return false;
+    }
+
+    if ((m_llmClient == nullptr) || !m_llmClient->IsConfigured())
+    {
+        errorMessage = QStringLiteral("Agent LLM client is not configured.");
+        return false;
+    }
+
+    if ((m_toolLoopExecutor == nullptr) || (m_toolRegistry == nullptr))
+    {
+        errorMessage = QStringLiteral("Agent tool.loop executor is not initialized.");
+        return false;
+    }
+
+    _tagToolLoopRequest request;
+
+    if (!ToolLoopNode::BuildRequest(node, context, *m_toolRegistry, request, errorMessage))
+    {
+        return false;
+    }
+
+    // 先以循环 ID 登记异步挂起状态，再启动执行器；Finished 延迟到事件循环发出。
+    const int loopId = m_toolLoopExecutor->PeekNextLoopId();
+
+    if (!SetAsyncPendingState(node, context, loopId, errorMessage))
+    {
+        return false;
+    }
+
+    if (!m_toolLoopExecutor->Start(request))
+    {
+        errorMessage = QStringLiteral("Agent tool.loop node failed to start.");
+        return false;
+    }
+
+    emit LogMessage(QStringLiteral("Agent tool.loop node started: %1 (tools=%2)")
+                        .arg(loopId)
+                        .arg(request.config.tools.join(QStringLiteral(","))));
+    return true;
+}
+
 bool AgentRuntime::ExecuteOutputFormatNode(const _tagAgentDagNode &node,
                                            AgentContext &context,
                                            QString &errorMessage)
@@ -963,6 +1013,14 @@ void AgentRuntime::RegisterDefaultNodeHandlers()
                                QString &errorMessage)
     {
         return ExecuteWebResearchNode(node, context, errorMessage);
+    });
+
+    RegisterNodeHandler(AgentRuntimeInternal::NODE_TYPE_TOOL_LOOP,
+                        [this](const _tagAgentDagNode &node,
+                               AgentContext &context,
+                               QString &errorMessage)
+    {
+        return ExecuteToolLoopNode(node, context, errorMessage);
     });
 
     RegisterNodeHandler(NODE_TYPE_MEMORY_RETRIEVE,

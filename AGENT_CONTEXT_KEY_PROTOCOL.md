@@ -2,6 +2,15 @@
 
 本文档定义 Agent DAG 节点通过 `AgentContext` 交换数据时必须遵守的 key 命名协议。新增节点应优先使用本文档中的语义层 key，避免直接依赖其他节点的私有实现 key。
 
+## tool.loop invocation-local 协议
+
+- 输入沿用 `semantic.text.prompt` 和最终文本格式的 `conversation.history`；记忆/研究注入在节点边界组装。
+- 最终输出写 `semantic.text.response`，下游 `emotion.rewrite` / `output.format` / `memory.store` 不接收工具中间消息。
+- `semantic.tool.calls` 为审计数组，字段 `{round, tool, status, duration_ms, args_digest, error?}`；`args_digest` 是规范紧凑 JSON 的 SHA-256，不含参数正文。
+- `semantic.tool.trace` 为本次循环调试日志。两者仅本 invocation 有效，不提交到 session/history。
+- assistant tool_calls 与 tool replies 仅在执行器内存中保留，每个调用对应结果消息；history 继续使用最终文本 `QStringList`。
+- Runtime 异步关联使用 `tool:<loopId>`，不是文本 LLM 的 request ID 命名空间。
+
 ## 命名分层
 
 Agent 上下文 key 分为五层：

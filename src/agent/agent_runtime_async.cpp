@@ -1,6 +1,7 @@
 #include "vpet/agent/agent_runtime.h"
 #include "agent_runtime_internal.h"
 #include "vpet/agent/emotion_rewrite_node.h"
+#include "vpet/agent/tool_loop_node.h"
 #include "vpet/agent/web_research_node.h"
 #include "vpet/llm/llm_client.h"
 #include "vpet/web/web_research_engine.h"
@@ -159,6 +160,12 @@ void AgentRuntime::OnLlmChatCompleted(int requestId, const QString &content)
     const QString failureSource = ReadOutputSource(callbackContext);
     QString errorMessage;
 
+    if (pendingRequest.nodeType == NODE_TYPE_TOOL_LOOP)
+    {
+        // tool.loop 的 LLM 回调由 ToolLoopExecutor 直连处理，运行时不重复消费。
+        return;
+    }
+
     if (content.trimmed().isEmpty())
     {
         ResetAsyncExecutionState(m_context);
@@ -271,6 +278,13 @@ void AgentRuntime::OnLlmChatFailed(int requestId, const QString &message, int st
     const QString failureSource = m_asyncBridge.GetPending(pendingKey, pendingRequest)
                                   ? ReadOutputSource(pendingRequest.context)
                                   : OUTPUT_SOURCE_USER_RESPONSE;
+
+    if (pendingRequest.nodeType == NODE_TYPE_TOOL_LOOP)
+    {
+        // tool.loop 的失败由 ToolLoopExecutor 消费并自行收束。
+        return;
+    }
+
     ResetAsyncExecutionState(m_context);
     EmitAgentRequestFailed(requestId, message, statusCode, failureSource);
 }
@@ -522,6 +536,78 @@ void AgentRuntime::OnWebResearchFailed(int researchId,
         ResetAsyncExecutionState(m_context);
         emit LogMessage(errorMessage);
         EmitAgentRequestFailed(researchId, errorMessage, statusCode, failureSource);
+    }
+}
+
+void AgentRuntime::OnToolLoopFinished(const _tagToolLoopResult &result)
+{
+    const int loopId = result.loopId;
+    const QString pendingKey = BuildPendingRequestKey(ASYNC_CLIENT_TOOL, loopId);
+
+    if ((loopId <= 0) || pendingKey.isEmpty()
+        || !m_asyncBridge.ContainsPending(pendingKey))
+    {
+        emit LogMessage(QStringLiteral("Agent tool.loop result ignored because request is unknown."));
+        return;
+    }
+
+    AgentAsyncBridge::_tagPendingRequest pendingRequest;
+
+    if (!m_asyncBridge.GetPending(pendingKey, pendingRequest)
+        || (pendingRequest.clientType != ASYNC_CLIENT_TOOL)
+        || (pendingRequest.nodeType != NODE_TYPE_TOOL_LOOP)
+        || (pendingRequest.requestId != loopId))
+    {
+        emit LogMessage(QStringLiteral("Agent tool.loop result ignored because correlation does not match."));
+        return;
+    }
+
+    if (result.ok)
+    {
+        emit LogMessage(QStringLiteral("Agent tool.loop finished: %1 (%2)")
+                            .arg(loopId)
+                            .arg(ToolLoopStatusToString(result.status)));
+    }
+    else
+    {
+        emit LogMessage(QStringLiteral("Agent tool.loop failed: %1 (%2) %3")
+                            .arg(loopId)
+                            .arg(ToolLoopStatusToString(result.status))
+                            .arg(result.reason));
+    }
+
+    AgentContext callbackContext = pendingRequest.context.Snapshot();
+    const QString failureSource = ReadOutputSource(callbackContext);
+    QString errorMessage;
+
+    if (!ToolLoopNode::Complete(result, callbackContext, errorMessage))
+    {
+        ResetAsyncExecutionState(m_context);
+        emit LogMessage(errorMessage);
+        EmitAgentRequestFailed(loopId, errorMessage, 0, failureSource);
+        return;
+    }
+
+    if (!result.ok)
+    {
+        // 循环失败（预算 end 策略、取消、LLM 失败等）按请求失败收束本轮 invocation。
+        ResetAsyncExecutionState(m_context);
+        EmitAgentRequestFailed(loopId,
+                               result.reason.trimmed().isEmpty()
+                                   ? QStringLiteral("Agent tool.loop failed.")
+                                   : result.reason.trimmed(),
+                               0,
+                               failureSource);
+        return;
+    }
+
+    ClearAsyncPendingState(callbackContext);
+
+    if (!ResumePendingNode(pendingKey, loopId, callbackContext, errorMessage))
+    {
+        ResetAsyncExecutionState(m_context);
+        emit LogMessage(errorMessage);
+        EmitAgentRequestFailed(loopId, errorMessage, 0, failureSource);
     }
 }
 }

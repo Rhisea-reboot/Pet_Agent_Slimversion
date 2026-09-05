@@ -6,6 +6,14 @@ Pet Agent 是一个基于 Qt 6 / C++17 的 Windows 桌面宠物应用。动画�
 
 Agent 的核心职责是把用户输入和屏幕感知转换为可追踪的 DAG invocation，并将最终文本通过 `AgentOutputReady` 返回给 UI。TTS 和桌宠动画仍由 UI/控制器层消费输出信号。
 
+## 可选 tool.loop 微编排
+
+`src/agent/tools/` 提供 `ITool`、注册表、顺序调度器、非流式循环执行器和原生适配器。`tool_loop_node.cpp` 负责配置和上下文边界，运行时以独立 `tool:<loopId>` 异步命名空间恢复 DAG，避免与 `text:<requestId>` 冲突。工具完成结果必须回传调度器生成的 `executionId`，迟到结果不能完成下一次调用。工具参数审计使用 SHA-256 摘要，不记录参数正文。
+
+原生适配器分别调用 WebSearchTool、MemoryService 的独立 `tool.memory.search` mailbox（按宠物和请求 ID 校验）、按调用创建的 ScreenshotSensor + 已配置 VisionLlmClient。原生工具构造不触发捕获或网络。工具权限由节点允许列表和调度器 trust tier 双重限制。编辑器当前只接受三个内置工具名；程序化注册扩展仍由运行时注册表校验。
+
+默认图不变；示例图采用工具循环。中间转写不进入 history，不发送 UI 输出。阶段 5 不在本实现范围内。
+
 ## DAG 模型
 
 配置文件使用 JSON，节点是带 `id`、`type`、`config` 的对象，边只表达依赖关系：

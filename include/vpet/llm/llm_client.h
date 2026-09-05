@@ -2,6 +2,8 @@
 #define VPET_LLM_LLM_CLIENT_H
 
 #include <QHash>
+#include <QJsonArray>
+#include <QJsonObject>
 #include <QObject>
 #include <QString>
 #include <QVector>
@@ -24,12 +26,26 @@ enum class LLM_MESSAGE_ROLE
 };
 
 /**
+ * @brief LLM 工具调用（assistant 消息使用）
+ */
+struct _tagLlmToolCall
+{
+    QString id;                   ///< 工具调用 ID（tool_call.id；缺失时由解析生成占位）
+    QString name;                 ///< 函数名（function.name）
+    QJsonObject arguments;        ///< 解析后的参数对象
+    QString rawArguments;         ///< Original wire arguments, including malformed JSON.
+    bool argumentsValid = true;   ///< function.arguments 是否为合法 JSON 对象
+};
+
+/**
  * @brief LLM 单条聊天消息
  */
 struct _tagLlmMessage
 {
     LLM_MESSAGE_ROLE role = LLM_MESSAGE_ROLE::USER; ///< 消息角色
     QString content;                                ///< 消息正文
+    QVector<_tagLlmToolCall> toolCalls;             ///< assistant 角色的工具调用列表
+    QString toolCallId;                             ///< tool 角色的关联工具调用 ID
 };
 
 /**
@@ -54,12 +70,16 @@ struct _tagLlmRequestOptions
     double presencePenalty = 0.0;  ///< 存在惩罚，范围 -2 到 2
     int maxTokens = 2048;          ///< 最大输出 token 数
     bool stream = false;           ///< 是否使用 SSE 流式响应
+    QJsonArray tools;              ///< OpenAI 格式 tools 声明（由 ToolRegistry 生成）
+    QString toolChoice;            ///< 工具选择策略："auto"/"none"/指定函数名；空则省略
 };
 
 /**
  * @brief OpenAI 兼容纯文本 LLM HTTP 客户端
  *
- * 仅处理文本 messages 请求，不处理图片、音频或工具调用执行逻辑。
+ * 仅处理文本 messages 请求，不处理图片、音频。非流式请求支持 function
+ * calling（tools 声明、assistant 的 tool_calls 解析与 tool 消息回填）；
+ * 流式 SSE 的 tool_calls delta 分片拼装不在本客户端范围内。
  * 所有请求异步发送，结果通过信号返回。
  */
 class LlmClient : public QObject
@@ -166,6 +186,27 @@ signals:
     void ChatCompleted(int requestId, const QString &content);
 
     /**
+     * @brief 非流式响应含工具调用时发出。
+     *
+     * 响应中 assistant 消息的 tool_calls 非空时不再发 ChatCompleted；
+     * 调用方应执行工具并把结果作为 tool 消息回填后继续循环。
+     * @param[in] requestId 请求 ID
+     * @param[in] toolCalls 解析后的工具调用列表
+     */
+    void ChatToolCallsCompleted(int requestId,
+                                const QVector<vpet::_tagLlmToolCall> &toolCalls);
+
+    /**
+     * @brief 端点不支持 tools 功能（4xx 且错误体提及 tools/function calling）。
+     *
+     * 调用方（如 tool.loop 节点）应按 fallback 降级为普通对话并在 trace 记录。
+     * @param[in] requestId 请求 ID
+     * @param[in] message 脱敏错误描述
+     * @param[in] statusCode HTTP 状态码
+     */
+    void ChatToolsUnsupported(int requestId, const QString &message, int statusCode);
+
+    /**
      * @brief LLM 请求失败信号
      * @param[in] requestId 请求 ID；请求未发出时为 -1
      * @param[in] message 错误描述
@@ -212,15 +253,26 @@ private:
     static QString RoleToString(LLM_MESSAGE_ROLE role);
 
     /**
-     * @brief 从 API 响应 JSON 中提取第一条回复文本
+     * @brief 从 API 响应 JSON 中提取 assistant 消息内容与工具调用
      * @param[in] responseData 响应 JSON 字节
-     * @param[out] content 回复文本
+     * @param[out] content 回复文本（可能为空）
+     * @param[out] toolCalls 解析出的工具调用列表
      * @param[out] errorMessage 错误描述
      * @return 提取成功返回 true
      */
-    static bool ExtractAssistantContent(const QByteArray &responseData,
-                                        QString &content,
-                                        QString &errorMessage);
+    static bool ExtractAssistantResponse(const QByteArray &responseData,
+                                         QString &content,
+                                         QVector<_tagLlmToolCall> &toolCalls,
+                                         QString &errorMessage);
+
+    /**
+     * @brief 判断 4xx 响应是否提示端点不支持 tools
+     * @param[in] statusCode HTTP 状态码
+     * @param[in] responseData 响应体字节
+     * @return 提示不支持 tools 返回 true
+     */
+    static bool ResponseIndicatesToolsUnsupported(int statusCode,
+                                                  const QByteArray &responseData);
 
     /**
      * @brief 查找默认系统提示词文件
@@ -253,5 +305,9 @@ private:
 };
 
 } // namespace vpet
+
+Q_DECLARE_METATYPE(vpet::_tagLlmMessage)
+Q_DECLARE_METATYPE(vpet::_tagLlmToolCall)
+Q_DECLARE_METATYPE(QVector<vpet::_tagLlmToolCall>)
 
 #endif // VPET_LLM_LLM_CLIENT_H

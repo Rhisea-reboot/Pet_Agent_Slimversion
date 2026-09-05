@@ -116,6 +116,13 @@ QVector<DagValidationIssue> AgentDagValidator::Validate(const DagDocument &docum
         }
 
         ValidateNodeConfig(node, spec, issues);
+        if (node.type == QStringLiteral("tool.loop")) {
+            const QStringList builtins{QStringLiteral("web.search"), QStringLiteral("memory.search"), QStringLiteral("screen.describe")};
+            for (const QJsonValue &tool : node.config.value(QStringLiteral("tools")).toArray()) {
+                if (!tool.isString() || !builtins.contains(tool.toString()))
+                    addError(nodeId, QStringLiteral("unknown_tool"), QStringLiteral("Unknown built-in tool: %1").arg(tool.toString()));
+            }
+        }
 
         // 非 source 节点声明 trigger 是无效配置；source 节点的 trigger 取值
         // 必须是运行时可派发的事件来源。

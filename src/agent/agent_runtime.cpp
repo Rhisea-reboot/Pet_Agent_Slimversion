@@ -2,6 +2,7 @@
 #include "agent_runtime_internal.h"
 #include "vpet/llm/llm_client.h"
 #include "vpet/web/web_research_engine.h"
+#include "vpet/agent/tools/native_tools.h"
 
 #include <QCoreApplication>
 #include <QCryptographicHash>
@@ -46,6 +47,8 @@ AgentRuntime::AgentRuntime(WebResearchEngine *webResearchEngine,
     , m_memoryConfigLoaded(false)
     , m_nodeRegistry()
     , m_graphExecutor()
+    , m_toolRegistry(new ToolRegistry())
+    , m_toolLoopExecutor(new ToolLoopExecutor(this))
     , m_dagConfigWatcher(nullptr)
     , m_dagConfigPath()
     , m_dagConfigFingerprint()
@@ -82,15 +85,34 @@ AgentRuntime::AgentRuntime(WebResearchEngine *webResearchEngine,
             this, &AgentRuntime::OnWebResearchCompleted);
     connect(m_webResearchEngine, &WebResearchEngine::Failed,
             this, &AgentRuntime::OnWebResearchFailed);
+    connect(m_toolLoopExecutor, &ToolLoopExecutor::Finished,
+            this, &AgentRuntime::OnToolLoopFinished);
+    m_toolLoopExecutor->SetLlmClient(m_llmClient);
+    m_toolLoopExecutor->SetToolRegistry(m_toolRegistry);
     connect(m_memoryService, &MemoryService::LogMessage,
             this, &AgentRuntime::LogMessage);
 
+    for (const auto kind : {NativeTool::Kind::Web, NativeTool::Kind::Memory, NativeTool::Kind::Screen}) {
+        auto tool = std::make_shared<NativeTool>(kind, m_memoryService, m_visionLlmClient, [this]() {
+            QVariant value;
+            return m_context.GetValue(AgentContextKeys::PET_ID, value) ? value.toString().trimmed() : QString();
+        });
+        QString error;
+        m_toolRegistry->Register(tool, error);
+    }
     RegisterDefaultNodeHandlers();
 }
 
 AgentRuntime::~AgentRuntime()
 {
-    // QObject parent-child ownership releases the client instances.
+    // Cancel while the clients and registry are still alive.
+    delete m_toolLoopExecutor;
+    m_toolLoopExecutor = nullptr;
+}
+
+std::shared_ptr<ToolRegistry> AgentRuntime::GetToolRegistry() const
+{
+    return m_toolRegistry;
 }
 
 bool AgentRuntime::Load(const QString &configPath, QString &errorMessage)
@@ -320,6 +342,8 @@ bool AgentRuntime::LoadWebSearchConfig(const QString &configPath, QString &error
         return false;
     }
 
+    const auto tool = std::dynamic_pointer_cast<NativeTool>(m_toolRegistry->Find(QStringLiteral("web.search")));
+    if (tool && !tool->LoadWebConfig(configPath, errorMessage)) return false;
     emit LogMessage(QStringLiteral("Agent web search config loaded: %1").arg(configPath));
     return true;
 }

@@ -26,6 +26,7 @@ inline const QString &NODE_TYPE_USER_INPUT = AgentContextKeys::NODE_TYPE_USER_IN
 inline const QString &NODE_TYPE_WEB_RESEARCH = AgentContextKeys::NODE_TYPE_WEB_RESEARCH;
 inline const QString &NODE_TYPE_MEMORY_RETRIEVE = AgentContextKeys::NODE_TYPE_MEMORY_RETRIEVE;
 inline const QString &NODE_TYPE_MEMORY_STORE = AgentContextKeys::NODE_TYPE_MEMORY_STORE;
+inline const QString &NODE_TYPE_TOOL_LOOP = AgentContextKeys::NODE_TYPE_TOOL_LOOP;
 
 inline const QString DEFAULT_PET_ID = QStringLiteral("default");
 
@@ -94,6 +95,7 @@ inline const QString TRIGGER_TYPE_VISION = QStringLiteral("vision");
 inline const QString ASYNC_CLIENT_TEXT = QStringLiteral("text");
 inline const QString ASYNC_CLIENT_VISION = QStringLiteral("vision");
 inline const QString ASYNC_CLIENT_WEB = QStringLiteral("web");
+inline const QString ASYNC_CLIENT_TOOL = QStringLiteral("tool");
 inline const QString OUTPUT_SOURCE_USER_RESPONSE = QStringLiteral("user_response");
 inline const QString OUTPUT_SOURCE_VISION_PROACTIVE = QStringLiteral("vision_proactive");
 

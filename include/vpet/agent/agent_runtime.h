@@ -7,6 +7,7 @@
 #include "vpet/agent/agent_node_registry.h"
 #include "vpet/agent/invocation_queue_policy.h"
 #include "vpet/agent/agent_output_policy.h"
+#include "vpet/agent/tools/tool_loop_executor.h"
 #include "vpet/llm/vision_llm_client.h"
 #include "vpet/memory/memory_consolidator.h"
 #include "vpet/stream_sentence_splitter.h"
@@ -358,6 +359,12 @@ public:
      */
     bool RegisterNodeHandler(const QString &nodeType, const NodeHandler &handler);
 
+    /**
+     * @brief 获取工具注册表（tool.loop 原生工具的注册入口）
+     * @return 工具注册表共享指针
+     */
+    std::shared_ptr<ToolRegistry> GetToolRegistry() const;
+
 signals:
     /**
      * @brief Agent 日志信号
@@ -461,6 +468,9 @@ private slots:
     void OnWebResearchCompleted(const _tagWebResearchResponse &response);
     /** @brief 处理联网研究失败。 @param[in] researchId 研究 ID。 @param[in] message 错误描述。 @param[in] statusCode HTTP 状态码。 */
     void OnWebResearchFailed(int researchId, const QString &message, int statusCode);
+
+    /** @brief 处理 tool.loop 循环收束。 @param[in] result 结构化循环结果。 */
+    void OnToolLoopFinished(const vpet::_tagToolLoopResult &result);
 
     /** @brief 处理 DAG 配置文件的外部修改（防抖后校验并自动热重载）。 */
     void OnDagConfigFileChanged();
@@ -616,6 +626,17 @@ private:
     bool ExecuteWebResearchNode(const _tagAgentDagNode &node,
                                 AgentContext &context,
                                 QString &errorMessage);
+
+    /**
+     * @brief 执行工具循环节点
+     * @param[in] node 节点定义
+     * @param[in,out] context 运行时上下文
+     * @param[out] errorMessage 错误描述
+     * @return 执行成功返回 true
+     */
+    bool ExecuteToolLoopNode(const _tagAgentDagNode &node,
+                             AgentContext &context,
+                             QString &errorMessage);
 
     /**
      * @brief 执行记忆检索节点
@@ -784,6 +805,8 @@ private:
     QStringList m_latestSurfacedMemoryIds; ///< 最近一次回答实际注入的记忆 ID
     AgentNodeRegistry m_nodeRegistry;     ///< 节点注册与别名执行组件
     AgentGraphExecutor m_graphExecutor;   ///< DAG 与单轮调度组件
+    std::shared_ptr<ToolRegistry> m_toolRegistry; ///< 工具注册表（tool.loop 微编排）
+    ToolLoopExecutor *m_toolLoopExecutor; ///< tool.loop 循环执行器
     QFileSystemWatcher *m_dagConfigWatcher; ///< DAG 配置文件监视器（懒创建）
     QString m_dagConfigPath;              ///< 当前加载的 DAG 配置路径
     QByteArray m_dagConfigFingerprint;    ///< 最近一次读取的配置内容指纹

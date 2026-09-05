@@ -14,6 +14,7 @@ using AgentContextKeys::NODE_TYPE_MEMORY_RETRIEVE;
 using AgentContextKeys::NODE_TYPE_MEMORY_STORE;
 using AgentContextKeys::NODE_TYPE_OUTPUT_FORMAT;
 using AgentContextKeys::NODE_TYPE_PROACTIVE_TOPIC;
+using AgentContextKeys::NODE_TYPE_TOOL_LOOP;
 using AgentContextKeys::NODE_TYPE_USER_INPUT;
 using AgentContextKeys::NODE_TYPE_VISION_INPUT;
 using AgentContextKeys::NODE_TYPE_VISION_LLM;
@@ -382,6 +383,95 @@ bool RegisterDefaultNodeSpecs(AgentNodeCatalog &catalog)
                                          QStringLiteral("启用的搜索引擎列表；留空回退 bing。"));
         engines.defaultValue = QVariant(QStringList{QStringLiteral("bing")});
         spec.inputs.append(engines);
+
+        registerSpec(spec);
+    }
+
+    // ---- tool.loop：LLM 动态工具循环 -----------------------------------------
+    {
+        DagNodeSpec spec;
+        spec.type = NODE_TYPE_TOOL_LOOP;
+        spec.displayName = QStringLiteral("工具循环");
+        spec.category = QStringLiteral("工具");
+        spec.accentColor = CATEGORY_COLOR_TOOL;
+        spec.description = QStringLiteral("LLM 通过 function calling 自主决定调用哪些工具、传参与解读结果，最终产出回复。");
+        spec.reads = QStringList{QStringLiteral("semantic.text.prompt"),
+                                 QStringLiteral("node.input.prompt"),
+                                 QStringLiteral("conversation.history")};
+        spec.writes = QStringList{QStringLiteral("semantic.text.response"),
+                                  QStringLiteral("node.output.text_response"),
+                                  QStringLiteral("semantic.tool.calls"),
+                                  QStringLiteral("semantic.tool.trace")};
+
+        DagInputSpec tools = MakeInput(QStringLiteral("tools"),
+                                       QStringLiteral("允许工具"),
+                                       DagWidgetType::StringList,
+                                       QVariant(QStringList()),
+                                       QStringLiteral("引用已注册工具名（如 web.search、memory.search、screen.describe），逗号分隔；留空等价普通对话。"));
+        spec.inputs.append(tools);
+
+        const auto boundedInt = [&spec](const QString &key,
+                                        const QString &label,
+                                        int defaultValue,
+                                        int minValue,
+                                        int maxValue,
+                                        const QString &tooltip)
+        {
+            DagInputSpec input = MakeInput(key, label, DagWidgetType::Int, defaultValue, tooltip);
+            input.minValue = minValue;
+            input.maxValue = maxValue;
+            spec.inputs.append(input);
+        };
+
+        boundedInt(QStringLiteral("max_rounds"),
+                   QStringLiteral("最大循环轮数"), 4, 1, 16,
+                   QStringLiteral("LLM 工具循环的轮数硬上限。"));
+        boundedInt(QStringLiteral("time_budget_ms"),
+                   QStringLiteral("时间预算（毫秒）"), 20000, 0, 600000,
+                   QStringLiteral("整个循环的墙钟预算；0 表示不限时。"));
+        boundedInt(QStringLiteral("max_tool_calls"),
+                   QStringLiteral("工具调用上限"), 12, 1, 64,
+                   QStringLiteral("单次 invocation 的工具调用总次数上限。"));
+        boundedInt(QStringLiteral("tool_timeout_ms"),
+                   QStringLiteral("单工具超时（毫秒）"), 10000, 100, 120000,
+                   QStringLiteral("单个工具调用的超时时间，超时后以失败结果回喂 LLM。"));
+
+        DagInputSpec permission = MakeInput(QStringLiteral("permission"),
+                                            QStringLiteral("权限策略"),
+                                            DagWidgetType::Enum,
+                                            QStringLiteral("auto_readonly"),
+                                            QStringLiteral("auto_readonly 只放行只读工具；allow_all 为开发档全放行；ask 暂与 auto_readonly 相同（气泡确认在后续版本提供）。"));
+        permission.enumValues = QStringList{QStringLiteral("auto_readonly"),
+                                            QStringLiteral("allow_all"),
+                                            QStringLiteral("ask")};
+        spec.inputs.append(permission);
+
+        DagInputSpec budgetPolicy = MakeInput(QStringLiteral("on_budget_exhausted"),
+                                              QStringLiteral("预算收束策略"),
+                                              DagWidgetType::Enum,
+                                              QStringLiteral("answer_with_context"),
+                                              QStringLiteral("answer_with_context 预算耗尽后基于已有上下文作答；end 直接结束本轮。"));
+        budgetPolicy.enumValues = QStringList{QStringLiteral("answer_with_context"),
+                                              QStringLiteral("end")};
+        spec.inputs.append(budgetPolicy);
+
+        DagInputSpec fallback = MakeInput(QStringLiteral("fallback"),
+                                          QStringLiteral("降级策略"),
+                                          DagWidgetType::Enum,
+                                          QStringLiteral("plain_chat"),
+                                          QStringLiteral("端点不支持 tools 时：plain_chat 降级为普通对话；fail 直接失败。"));
+        fallback.enumValues = QStringList{QStringLiteral("plain_chat"),
+                                          QStringLiteral("fail")};
+        spec.inputs.append(fallback);
+
+        DagInputSpec asyncTimeout = MakeInput(QStringLiteral("async_timeout_ms"),
+                                              QStringLiteral("异步超时（毫秒）"),
+                                              DagWidgetType::Int,
+                                              60000,
+                                              QStringLiteral("等待循环收束的超时时间，上限 600000。"));
+        asyncTimeout.minValue = 1;
+        asyncTimeout.maxValue = 600000;
+        spec.inputs.append(asyncTimeout);
 
         registerSpec(spec);
     }

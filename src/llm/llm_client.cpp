@@ -171,6 +171,10 @@ int LlmClient::SendChat(const QVector<_tagLlmMessage> &messages,
         return -1;
     }
 
+    if (options.stream && !options.tools.isEmpty()) {
+        emit ChatFailed(-1, QStringLiteral("Streaming tool calls are not supported."), 0);
+        return -1;
+    }
     QVector<_tagLlmMessage> requestMessages = messages;
 
     if (!m_systemPrompt.isEmpty() && !HasSystemMessage(requestMessages))
@@ -186,15 +190,52 @@ int LlmClient::SendChat(const QVector<_tagLlmMessage> &messages,
 
     for (const _tagLlmMessage &message : requestMessages)
     {
-        if (message.content.trimmed().isEmpty())
+        const bool isToolMessage = message.role == LLM_MESSAGE_ROLE::TOOL;
+
+        if (message.content.trimmed().isEmpty()
+            && message.toolCalls.isEmpty()
+            && message.toolCallId.isEmpty())
         {
             emit ChatFailed(-1, QStringLiteral("LLM message content is empty."), 0);
+            return -1;
+        }
+
+        if (isToolMessage && message.toolCallId.trimmed().isEmpty())
+        {
+            emit ChatFailed(-1, QStringLiteral("LLM tool message requires a tool call ID."), 0);
             return -1;
         }
 
         QJsonObject messageObject;
         messageObject[QStringLiteral("role")] = RoleToString(message.role);
         messageObject[QStringLiteral("content")] = message.content;
+
+        if (isToolMessage)
+        {
+            messageObject[QStringLiteral("tool_call_id")] = message.toolCallId;
+        }
+        else if (!message.toolCalls.isEmpty())
+        {
+            QJsonArray toolCallsArray;
+
+            for (const _tagLlmToolCall &toolCall : message.toolCalls)
+            {
+                QJsonObject functionObject;
+                functionObject[QStringLiteral("name")] = toolCall.name;
+                functionObject[QStringLiteral("arguments")] = !toolCall.rawArguments.isNull()
+                    ? toolCall.rawArguments : QString::fromUtf8(
+                        QJsonDocument(toolCall.arguments).toJson(QJsonDocument::Compact));
+
+                QJsonObject toolCallObject;
+                toolCallObject[QStringLiteral("id")] = toolCall.id;
+                toolCallObject[QStringLiteral("type")] = QStringLiteral("function");
+                toolCallObject[QStringLiteral("function")] = functionObject;
+                toolCallsArray.append(toolCallObject);
+            }
+
+            messageObject[QStringLiteral("tool_calls")] = toolCallsArray;
+        }
+
         messageArray.append(messageObject);
     }
 
@@ -208,6 +249,16 @@ int LlmClient::SendChat(const QVector<_tagLlmMessage> &messages,
     body[QStringLiteral("presence_penalty")] = normalizedOptions.presencePenalty;
     body[QStringLiteral("max_tokens")] = normalizedOptions.maxTokens;
     body[QStringLiteral("stream")] = normalizedOptions.stream;
+
+    if (!normalizedOptions.tools.isEmpty())
+    {
+        body[QStringLiteral("tools")] = normalizedOptions.tools;
+    }
+
+    if (!normalizedOptions.toolChoice.trimmed().isEmpty())
+    {
+        body[QStringLiteral("tool_choice")] = normalizedOptions.toolChoice.trimmed();
+    }
 
     const QByteArray bodyData = QJsonDocument(body).toJson(QJsonDocument::Compact);
     const QUrl requestUrl(m_config.baseUrl + QStringLiteral("/chat/completions"));
@@ -236,6 +287,7 @@ int LlmClient::SendChat(const QVector<_tagLlmMessage> &messages,
 
     reply->setProperty("requestId", requestId);
     reply->setProperty("stream", normalizedOptions.stream);
+    reply->setProperty("toolsSent", !normalizedOptions.tools.isEmpty());
 
     if (normalizedOptions.stream)
     {
@@ -444,6 +496,17 @@ void LlmClient::OnReplyFinished(QNetworkReply *reply)
 
     if (reply->error() != QNetworkReply::NoError)
     {
+        // 4xx 且错误体提示不支持 tools：发出降级信号，由调用方按 fallback 处理。
+        // 非 2xx 响应在 QNetworkReply 中同样表现为错误，需在此分支前判定。
+        if (reply->property("toolsSent").toBool()
+            && ResponseIndicatesToolsUnsupported(statusCode, responseData) && !isStream)
+        {
+            const QString message = QStringLiteral("LLM HTTP error %1: tools unsupported.")
+                                    .arg(statusCode);
+            emit ChatToolsUnsupported(requestId, message, statusCode);
+            return;
+        }
+
         const QString message = QStringLiteral("LLM network error: %1").arg(reply->errorString());
         emit ChatFailed(requestId, message, statusCode);
         return;
@@ -458,6 +521,7 @@ void LlmClient::OnReplyFinished(QNetworkReply *reply)
     }
 
     QString content;
+    QVector<_tagLlmToolCall> toolCalls;
 
     if (isStream)
     {
@@ -476,13 +540,128 @@ void LlmClient::OnReplyFinished(QNetworkReply *reply)
 
     QString errorMessage;
 
-    if (!ExtractAssistantContent(responseData, content, errorMessage))
+    if (!ExtractAssistantResponse(responseData, content, toolCalls, errorMessage))
     {
         emit ChatFailed(requestId, errorMessage, statusCode);
         return;
     }
 
+    if (!toolCalls.isEmpty())
+    {
+        emit ChatToolCallsCompleted(requestId, toolCalls);
+        return;
+    }
+
     emit ChatCompleted(requestId, content);
+}
+
+bool LlmClient::ExtractAssistantResponse(const QByteArray &responseData,
+                                         QString &content,
+                                         QVector<_tagLlmToolCall> &toolCalls,
+                                         QString &errorMessage)
+{
+    content.clear();
+    toolCalls.clear();
+
+    if (responseData.isEmpty())
+    {
+        errorMessage = QStringLiteral("LLM response body is empty.");
+        return false;
+    }
+
+    const QJsonDocument document = QJsonDocument::fromJson(responseData);
+
+    if (!document.isObject())
+    {
+        errorMessage = QStringLiteral("LLM response is not a JSON object.");
+        return false;
+    }
+
+    const QJsonArray choices = document.object().value(QStringLiteral("choices")).toArray();
+
+    if (choices.isEmpty())
+    {
+        errorMessage = QStringLiteral("LLM response choices are empty.");
+        return false;
+    }
+
+    const QJsonObject firstChoice = choices.at(0).toObject();
+    const QJsonObject message = firstChoice.value(QStringLiteral("message")).toObject();
+    content = message.value(QStringLiteral("content")).toString();
+
+    const QJsonArray toolCallsArray = message.value(QStringLiteral("tool_calls")).toArray();
+
+    for (int i = 0; i < toolCallsArray.size(); ++i)
+    {
+        const QJsonObject toolCallObject = toolCallsArray.at(i).toObject();
+        const QJsonObject functionObject =
+            toolCallObject.value(QStringLiteral("function")).toObject();
+
+        _tagLlmToolCall toolCall;
+        toolCall.id = toolCallObject.value(QStringLiteral("id")).toString().trimmed();
+
+        // 兼容端点缺失 id 时生成占位 id，保证 tool 消息回填可关联。
+        if (toolCall.id.isEmpty())
+        {
+            toolCall.id = QStringLiteral("call_%1").arg(i + 1);
+        }
+
+        toolCall.name = functionObject.value(QStringLiteral("name")).toString().trimmed();
+
+        const QString argumentsText =
+            functionObject.value(QStringLiteral("arguments")).toString().trimmed();
+
+        toolCall.rawArguments = functionObject.value(QStringLiteral("arguments")).toString();
+        toolCall.argumentsValid = !argumentsText.isEmpty();
+        if (!argumentsText.isEmpty())
+        {
+            QJsonParseError parseError;
+            const QJsonDocument argumentsDocument =
+                QJsonDocument::fromJson(argumentsText.toUtf8(), &parseError);
+
+            if ((parseError.error == QJsonParseError::NoError)
+                && argumentsDocument.isObject())
+            {
+                toolCall.arguments = argumentsDocument.object();
+            }
+            else
+            {
+                // 畸形参数 JSON：arguments 置空对象并标记无效，由调用方合成错误回喂。
+                toolCall.argumentsValid = false;
+            }
+        }
+
+        toolCalls.append(toolCall);
+    }
+
+    if (toolCalls.isEmpty() && content.isEmpty())
+    {
+        errorMessage = QStringLiteral("LLM response content and tool calls are both empty.");
+        return false;
+    }
+
+    return true;
+}
+
+bool LlmClient::ResponseIndicatesToolsUnsupported(int statusCode,
+                                                  const QByteArray &responseData)
+{
+    if ((statusCode < 400) || (statusCode >= 500) || responseData.isEmpty())
+    {
+        return false;
+    }
+
+    const QString lowerBody = QString::fromUtf8(responseData).toLower();
+
+    if (!lowerBody.contains(QStringLiteral("unsupported"))
+        && !lowerBody.contains(QStringLiteral("not support"))
+        && !lowerBody.contains(QStringLiteral("unknown parameter"))
+        && !lowerBody.contains(QStringLiteral("unrecognized"))) return false;
+
+    return lowerBody.contains(QStringLiteral("tool_calls"))
+           || lowerBody.contains(QStringLiteral("function calling"))
+           || lowerBody.contains(QStringLiteral("tool calls"))
+           || lowerBody.contains(QStringLiteral("tools"));
 }
 
 bool LlmClient::NormalizeConfig(const _tagLlmConfig &config,
@@ -572,45 +751,6 @@ QString LlmClient::RoleToString(LLM_MESSAGE_ROLE role)
     }
 
     return QStringLiteral("user");
-}
-
-bool LlmClient::ExtractAssistantContent(const QByteArray &responseData,
-                                        QString &content,
-                                        QString &errorMessage)
-{
-    if (responseData.isEmpty())
-    {
-        errorMessage = QStringLiteral("LLM response body is empty.");
-        return false;
-    }
-
-    const QJsonDocument document = QJsonDocument::fromJson(responseData);
-
-    if (!document.isObject())
-    {
-        errorMessage = QStringLiteral("LLM response is not a JSON object.");
-        return false;
-    }
-
-    const QJsonArray choices = document.object().value(QStringLiteral("choices")).toArray();
-
-    if (choices.isEmpty())
-    {
-        errorMessage = QStringLiteral("LLM response choices are empty.");
-        return false;
-    }
-
-    const QJsonObject firstChoice = choices.at(0).toObject();
-    const QJsonObject message = firstChoice.value(QStringLiteral("message")).toObject();
-    content = message.value(QStringLiteral("content")).toString();
-
-    if (content.isEmpty())
-    {
-        errorMessage = QStringLiteral("LLM response content is empty.");
-        return false;
-    }
-
-    return true;
 }
 
 QString LlmClient::FindSystemPromptPath(const QString &configPath)

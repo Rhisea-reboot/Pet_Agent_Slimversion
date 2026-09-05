@@ -26,7 +26,8 @@ QStringList BuildRegistryTypeList()
             NODE_TYPE_USER_INPUT,
             NODE_TYPE_VISION_INPUT,
             NODE_TYPE_VISION_LLM,
-            NODE_TYPE_WEB_RESEARCH};
+            NODE_TYPE_WEB_RESEARCH,
+            NODE_TYPE_TOOL_LOOP};
 }
 
 } // namespace
@@ -52,7 +53,7 @@ private:
 void AgentNodeCatalogTest::DefaultInstanceCoversAllNodeTypes()
 {
     QVERIFY(RegisterDefaultNodeSpecs(m_catalog));
-    QCOMPARE(m_catalog.Types().size(), 10);
+    QCOMPARE(m_catalog.Types().size(), 11);
 
     QStringList expected = BuildRegistryTypeList();
     QStringList actual = m_catalog.Types();
@@ -62,7 +63,7 @@ void AgentNodeCatalogTest::DefaultInstanceCoversAllNodeTypes()
 
     // 重复注册同一集合必须失败（幂等保护由 Contains 跳过实现）
     QVERIFY(RegisterDefaultNodeSpecs(m_catalog));
-    QCOMPARE(m_catalog.Types().size(), 10);
+    QCOMPARE(m_catalog.Types().size(), 11);
 }
 
 /**

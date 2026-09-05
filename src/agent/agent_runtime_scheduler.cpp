@@ -100,6 +100,10 @@ bool AgentRuntime::RegisterPendingNode(const _tagAgentDagNode &node,
     {
         clientType = ASYNC_CLIENT_VISION;
     }
+    else if (nodeType == NODE_TYPE_TOOL_LOOP)
+    {
+        clientType = ASYNC_CLIENT_TOOL;
+    }
     else if (nodeType == NODE_TYPE_WEB_RESEARCH)
     {
         clientType = ASYNC_CLIENT_WEB;
@@ -435,6 +439,12 @@ void AgentRuntime::ResetAsyncExecutionState(AgentContext &context)
     if (shouldCancelWebResearch)
     {
         m_webResearchEngine->Cancel();
+    }
+
+    // 取消传播：invocation 被替换或退出时级联取消 tool.loop 的在途 LLM/工具调用。
+    if ((m_toolLoopExecutor != nullptr) && m_toolLoopExecutor->IsBusy())
+    {
+        m_toolLoopExecutor->Cancel();
     }
 
     // Clear correlation before aborting: resulting callbacks must not resume the failed invocation.

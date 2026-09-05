@@ -14,6 +14,42 @@ find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets Network Multimedia Sql Con
 
 include(CTest)
 
+set(VPET_TOOL_SOURCES
+    src/agent/tools/itool.cpp
+    src/agent/tools/tool_registry.cpp
+    src/agent/tools/tool_scheduler.cpp
+    src/agent/tools/tool_loop_executor.cpp
+    src/agent/tool_loop_node.cpp
+    include/vpet/agent/tools/itool.h
+    include/vpet/agent/tools/tool_registry.h
+    include/vpet/agent/tools/tool_scheduler.h
+    include/vpet/agent/tools/tool_loop_executor.h
+    include/vpet/agent/tool_loop_node.h
+)
+# Apply after all existing targets have been declared.
+cmake_language(DEFER CALL vpet_add_tool_targets)
+function(vpet_add_tool_targets)
+    foreach(target VPet dag_hot_reload_tests dag_http_server_tests agent_runtime_scheduler_tests application_integration_tests memory_dag_integration_tests)
+        if(TARGET ${target})
+            target_sources(${target} PRIVATE ${VPET_TOOL_SOURCES}
+                src/agent/tools/native_tools.cpp include/vpet/agent/tools/native_tools.h
+                src/sensor/screenshot_sensor.cpp include/vpet/sensor/screenshot_sensor.h)
+            target_link_libraries(${target} PRIVATE Qt6::Gui)
+        endif()
+    endforeach()
+    if(BUILD_TESTING)
+        foreach(target tool_scheduler_tests llm_tool_calling_tests tool_loop_tests)
+            add_executable(${target} tests/${target}.cpp ${VPET_TOOL_SOURCES}
+                src/llm/llm_client.cpp include/vpet/llm/llm_client.h
+                src/agent/agent_context.cpp)
+            target_include_directories(${target} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+            target_link_libraries(${target} PRIVATE Qt6::Core Qt6::Network Qt6::Test)
+            set_property(TARGET ${target} PROPERTY AUTOMOC_COMPILER_PREDEFINES OFF)
+            add_test(NAME ${target} COMMAND ${target})
+        endforeach()
+    endif()
+endfunction()
+
 # 官方 onnxruntime C API 头文件位于 include/onnxruntime 子目录
 set(VPET_VENDOR_ONNXRUNTIME_INCLUDE
     ${CMAKE_CURRENT_SOURCE_DIR}/vendor/onnxruntime/include/onnxruntime

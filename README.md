@@ -8,6 +8,14 @@
 
 ---
 
+## 可选工具循环（非流式）
+
+`agent_dag_structure.example.json` 提供 `tool.loop` 示例；现有默认 DAG 不变，不自动迁移用户图。节点的 `tools` 是明确允许列表，空数组仅普通对话。可选原生工具为 `web.search`、`memory.search`、`screen.describe`。搜索复用搜索配置；记忆仅检索当前宠物；屏幕工具在实际调用时抓取新帧并发送到已配置的视觉端点，不使用旧摘要。**仅在接受截图外发时把 `screen.describe` 加入允许列表**；示例不代表自动授权。
+
+预算包括 `max_rounds`、`max_tool_calls`、`time_budget_ms` 和 `tool_timeout_ms`。轮数/调用预算耗尽可进行一次无工具总结；墙钟到期立即失败，不延长网络请求。`permission=auto_readonly`（默认）和 `ask` 均拒绝副作用工具，`ask` 尚无确认 UI；`allow_all` 仅供开发使用。端点明确以 4xx 拒绝 tools 时可 `fallback=plain_chat`。阶段 5 的流式工具调用、进度气泡、steering、结构化历史不实现。
+
+真实 API、截图及气泡/TTS 手工验收尚未执行；清单见 [工具循环实施方案](docs/tool_loop_implementation_plan.md)。
+
 ## 功能概览
 
 | 能力 | 说明 | 状态 |

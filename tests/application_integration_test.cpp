@@ -1,5 +1,7 @@
 #include "vpet/agent/agent_runtime.h"
 #include "vpet/agent/agent_context_keys.h"
+#include "vpet/agent/tools/native_tools.h"
+#include <QSignalSpy>
 
 #include <QCoreApplication>
 #include <QFile>
@@ -36,6 +38,28 @@ class ApplicationIntegrationTest : public QObject
     Q_OBJECT
 
 private slots:
+    void NativeToolsFailClosedWithoutServices() {
+        vpet::AgentRuntime runtime;
+        for (const auto &name : {QStringLiteral("web.search"), QStringLiteral("memory.search"), QStringLiteral("screen.describe")}) {
+            const auto tool = runtime.GetToolRegistry()->Find(name);
+            QVERIFY(tool);
+            QVERIFY(!tool->IsBusy());
+            QString error;
+            QVERIFY(!tool->ValidateArguments(QJsonObject(), error));
+            if (name == QStringLiteral("web.search")) continue; // Never contact even a local daemon here.
+            QSignalSpy spy(tool.get(), &vpet::ITool::Completed);
+            vpet::_tagToolCall call;
+            call.callId = QStringLiteral("native-test"); call.toolName = name;
+            call.arguments.insert(QStringLiteral("query"), QStringLiteral("test"));
+            call.executionId = 42;
+            tool->Execute(call);
+            QTRY_COMPARE(spy.size(), 1);
+            const auto result = spy.first().first().value<vpet::_tagToolExecutionResult>();
+            QVERIFY(!result.ok);
+            QCOMPARE(result.executionId, quint64(42));
+            QVERIFY(!tool->IsBusy());
+        }
+    }
     void UserInputReachesOutputNode();
     void PerceptionFrameReachesRuntimeContext();
 };
