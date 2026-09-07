@@ -230,6 +230,11 @@ private:
     void ShowMemoryManager();
 
     /**
+     * @brief 显示设置窗口（LLM 与长期记忆配置，保存后重启生效）
+     */
+    void ShowSettingsDialog();
+
+    /**
      * @brief 启动或打开 DAG 可视化编辑器（本地 HTTP 服务 + 浏览器）
      */
     void ShowDagEditor();

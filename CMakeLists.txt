@@ -104,6 +104,8 @@ set(VPET_SOURCES
     src/tts_server_manager.cpp
     src/chat_bubble_window.cpp
     src/splash_window.cpp
+    src/settings_config.cpp
+    src/settings_dialog.cpp
     src/perception/frame_buffer.cpp
     src/perception/perception_pipeline.cpp
     src/perception/vision_encoder.cpp
@@ -203,6 +205,8 @@ set(VPET_HEADERS
     include/vpet/memory/embedding_client.h
     include/vpet/memory/vector_store.h
     include/vpet/memory/memory_manager_dialog.h
+    include/vpet/settings_config.h
+    include/vpet/settings_dialog.h
     src/main_window.h
 )
 
@@ -578,6 +582,27 @@ if(BUILD_TESTING)
     set_property(TARGET pet_config_tests PROPERTY AUTOMOC_COMPILER_PREDEFINES OFF)
 
     add_test(NAME pet_config_tests COMMAND pet_config_tests)
+
+    add_executable(settings_config_tests
+        tests/settings_config_test.cpp
+        src/settings_config.cpp
+        include/vpet/settings_config.h
+    )
+
+    target_include_directories(settings_config_tests
+        PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/include
+    )
+
+    target_link_libraries(settings_config_tests
+        PRIVATE
+            Qt6::Core
+            Qt6::Test
+    )
+
+    set_property(TARGET settings_config_tests PROPERTY AUTOMOC_COMPILER_PREDEFINES OFF)
+
+    add_test(NAME settings_config_tests COMMAND settings_config_tests)
 
     add_executable(agent_runtime_scheduler_tests
         tests/agent_runtime_scheduler_test.cpp

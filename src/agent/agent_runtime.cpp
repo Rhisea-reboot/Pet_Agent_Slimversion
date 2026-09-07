@@ -299,6 +299,8 @@ bool AgentRuntime::LoadLlmConfig(const QString &configPath, QString &errorMessag
         return false;
     }
 
+    m_llmConfigPath = QFileInfo(configPath).absoluteFilePath();
+
     emit LogMessage(QStringLiteral("Agent LLM config loaded: %1").arg(configPath));
 
     return true;
@@ -558,6 +560,7 @@ bool AgentRuntime::LoadMemoryConfig(const QString &configPath, QString &errorMes
 
     m_memoryConfig = config;
     m_memoryConfigLoaded = true;
+    m_memoryConfigPath = QFileInfo(configPath).absoluteFilePath();
 
     if (!config.enabled)
     {
@@ -1145,6 +1148,51 @@ QString AgentRuntime::FindDefaultMemoryConfigPath() const
     }
 
     return QString();
+}
+
+QString AgentRuntime::GetLlmConfigPath() const
+{
+    return m_llmConfigPath;
+}
+
+QString AgentRuntime::GetMemoryConfigPath() const
+{
+    return m_memoryConfigPath;
+}
+
+QString AgentRuntime::ResolveLlmConfigPath() const
+{
+    if (!m_llmConfigPath.isEmpty())
+    {
+        return m_llmConfigPath;
+    }
+
+    const QString foundPath = FindDefaultLlmConfigPath();
+
+    if (!foundPath.isEmpty())
+    {
+        return foundPath;
+    }
+
+    // 首次缺配置时在搜索顺序的第一位创建，保证下次启动会被加载。
+    return QDir(QCoreApplication::applicationDirPath()).filePath(LLM_CONFIG_FILE_NAME);
+}
+
+QString AgentRuntime::ResolveMemoryConfigPath() const
+{
+    if (!m_memoryConfigPath.isEmpty())
+    {
+        return m_memoryConfigPath;
+    }
+
+    const QString foundPath = FindDefaultMemoryConfigPath();
+
+    if (!foundPath.isEmpty())
+    {
+        return foundPath;
+    }
+
+    return QDir(QCoreApplication::applicationDirPath()).filePath(MEMORY_CONFIG_FILE_NAME);
 }
 
 } // namespace vpet
