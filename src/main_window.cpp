@@ -6,6 +6,7 @@
 #include "vpet/memory/memory_manager_dialog.h"
 #include "vpet/perception/perception_pipeline.h"
 #include "vpet/perception/vision_encoder.h"
+#include "vpet/settings_dialog.h"
 #include "vpet/speech/voice_input_manager.h"
 
 #include <QAction>
@@ -1043,6 +1044,15 @@ void MainWindow::ShowPetContextMenu(const QPoint &globalPosition)
 
     menu.addSeparator();
 
+    QAction *settingsAction = menu.addAction(QStringLiteral("设置..."));
+
+    if (settingsAction != nullptr)
+    {
+        settingsAction->setEnabled(m_agentRuntime != nullptr);
+        connect(settingsAction, &QAction::triggered,
+                this, &MainWindow::ShowSettingsDialog);
+    }
+
     QAction *memoryManagerAction = menu.addAction(QStringLiteral("长期记忆"));
 
     if (memoryManagerAction != nullptr)
@@ -1170,6 +1180,17 @@ void MainWindow::ShowMemoryManager()
     m_memoryManagerDialog->ShowAndRefresh();
 }
 
+void MainWindow::ShowSettingsDialog()
+{
+    if (m_agentRuntime == nullptr)
+    {
+        return;
+    }
+
+    SettingsDialog dialog(m_agentRuntime, this);
+    dialog.exec();
+}
+
 void MainWindow::RequestApplicationExit()
 {
     if (m_isExiting)
@@ -1235,6 +1256,14 @@ void MainWindow::InitializeSystemTrayIcon()
     }
 
     m_trayMenu->addSeparator();
+
+    QAction *traySettingsAction = m_trayMenu->addAction(QStringLiteral("设置..."));
+
+    if (traySettingsAction != nullptr)
+    {
+        connect(traySettingsAction, &QAction::triggered,
+                this, &MainWindow::ShowSettingsDialog);
+    }
 
     QAction *exitAction = m_trayMenu->addAction(QStringLiteral("退出程序"));
 

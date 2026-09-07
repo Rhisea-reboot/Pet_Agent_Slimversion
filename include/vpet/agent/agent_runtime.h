@@ -177,6 +177,33 @@ public:
     bool IsMemoryEnabled() const;
 
     /**
+     * @brief 获取实际加载的文本 LLM 配置路径
+     * @return 配置文件绝对路径；尚未成功加载时为空字符串
+     */
+    QString GetLlmConfigPath() const;
+
+    /**
+     * @brief 获取实际加载的记忆配置路径
+     * @return 配置文件绝对路径；尚未成功加载时为空字符串
+     */
+    QString GetMemoryConfigPath() const;
+
+    /**
+     * @brief 解析设置面板读写的文本 LLM 配置路径
+     * @return 已加载路径 > 默认搜索路径 > 可执行文件目录下的默认文件名
+     *
+     * 与 LoadDefaultLlmConfig 的实际搜索顺序保持一致，保证面板编辑的
+     * 文件就是下次启动时会被加载的文件。
+     */
+    QString ResolveLlmConfigPath() const;
+
+    /**
+     * @brief 解析设置面板读写的记忆配置路径
+     * @return 已加载路径 > 默认搜索路径 > 可执行文件目录下的默认文件名
+     */
+    QString ResolveMemoryConfigPath() const;
+
+    /**
      * @brief 非阻塞提交本轮记忆使用反馈
      * @param[in] memoryIds 本轮浮现的记忆 ID
      * @param[in] helpful 是否有帮助
@@ -798,6 +825,8 @@ private:
     bool m_ownsMemoryService;              ///< 记忆服务是否由运行时创建
     MemoryConfig m_memoryConfig;           ///< 记忆服务配置
     bool m_memoryConfigLoaded;             ///< 是否已加载记忆配置
+    QString m_llmConfigPath;               ///< 实际加载的文本 LLM 配置路径
+    QString m_memoryConfigPath;            ///< 实际加载的记忆配置路径
     MemoryConsolidator m_memoryConsolidator; ///< LLM 巩固请求关联器
     StreamSentenceSplitter m_sentenceSplitter; ///< 主回复流式断句器
     QSet<int> m_streamingLlmRequests;       ///< 启用前台流式输出的请求 ID
