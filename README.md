@@ -26,7 +26,7 @@
 | 屏幕感知 | 定时截图 → 本地差分门控 → 后台编码 → Agent 上下文 | 可用 |
 | 视觉 LLM | 截图理解，生成画面摘要 | 可用 |
 | 主动话题 | `proactive.topic` 根据视觉摘要和策略决定是否发话 | 可用，含冷却与摘要去重 |
-| 长期记忆 | 对话记忆自动沉淀与检索（关键词/本地向量/级联召回）、巩固、维护、管理对话框、导入/导出 | 可用 |
+| 长期记忆 | 对话记忆沉淀与检索（关键词/本地向量/级联召回）、巩固（含可选自动提炼）、维护、管理对话框、导入/导出 | 可用 |
 | 文本 LLM | 用户回复 / 主动话语生成 | 可用（需配置） |
 | 情感改写 | 对话上下文下的情感标签与改写 | 部分可用 |
 | TTS | Kokoro HTTP 合成与播放（CPU 可跑、秒级启动） | 可用（需本地 runtime） |
@@ -190,7 +190,7 @@ Windows 下直接运行 `ctest` 时，若 Qt 的 `bin/` 目录不在 `PATH`，�
 5. `memory_config.json`（长期记忆，可选）
 6. `tts_config.json`（TTS，可选）
 
-配置查找路径通常包括：可执行文件目录、当前工作目录、上级目录。
+其中，`memory_config.json` 的查找路径按固定顺序依次尝试：可执行文件目录 → 当前工作目录 → 可执行文件目录的上级目录 → 上两级目录，先找到的生效（多个位置同时存在记忆配置时，其余被忽略）。其他配置的加载方式见下文各节。
 
 ---
 
@@ -297,7 +297,7 @@ copy vision_llm_config.example.json vision_llm_config.json
 | `proactive.topic` | 判断是否允许主动发话并组装提示词 | `semantic.vision.summary` | 输出 `semantic.proactive.*`、`semantic.text.prompt`；可配置 `enabled`、`instruction`、`min_interval_ms`、`dedup_window_ms` |
 | `web.research` | 受预算限制的联网研究 | `semantic.text.prompt` | 输出 invocation-local 的 `semantic.web.research.*` 并重组 `semantic.text.prompt`；默认 `mode=auto`（按检索决策规则判断，`/search` 等显式触发词始终强制检索），失败策略为 `continue` |
 | `memory.retrieve` | 检索相关记忆并注入提示词 | `semantic.text.prompt` | 输出 `semantic.memory.retrieval`；异步非阻塞（结果下一轮可用），embedding 未启用时退化为关键词检索 |
-| `memory.store` | 解析记忆命令并沉淀本轮对话 | `semantic.text.final`、`conversation.history` | 识别“记住/忘记/以后不要/更正”等命令写入记忆；无命令时由巩固逻辑决定是否提取 |
+| `memory.store` | 解析记忆命令并沉淀本轮对话 | `semantic.text.final`、`conversation.history` | 识别“记住/忘记/以后不要/更正”等命令写入记忆；开启 `automatic_extraction` 后，节点执行完由运行时追加自动提炼请求（见[开启长期记忆自动提炼](#51-开启长期记忆自动提炼automatic_extraction)） |
 | `llm.chat` | 调用文本 LLM | `semantic.text.prompt` | 输出 `semantic.text.response`；可配置 `temperature`（0-2）、`top_p`（0-1）、`frequency_penalty`/`presence_penalty`（-2 到 2）、`max_tokens`（1-32768），缺省时使用客户端默认值，越界值会明确报错 |
 | `emotion.rewrite` | 根据对话上下文总结情绪并改写回复 | `semantic.text.response`、`conversation.history` | 输出情绪标签和改写后的 `semantic.text.response`；无历史时可透传 |
 | `output.format` | 生成最终输出并维护对话历史 | `semantic.text.response` | 输出 `semantic.text.final`、`semantic.output.source`；无输出且主动策略拒绝时静默结束 |
@@ -366,13 +366,96 @@ copy memory_config.example.json memory_config.json
 | `max_results` | `6` | 每轮最多注入 LLM 的相关记忆条数 |
 | `prompt_budget_chars` | `1200` | 注入记忆的提示词预算上限 |
 | `default_scope` | `pet` | 默认记忆作用域（`pet` / `global`） |
-| `automatic_extraction` | `false` | 是否自动从对话中提取记忆（开启时每轮调用 `llm.chat` 巩固） |
+| `automatic_extraction` | `false` | 自动提炼开关：开启后对每个用户触发轮次追加一次 `llm.chat` 提炼调用（默认关闭，详见[开启长期记忆自动提炼](#51-开启长期记忆自动提炼automatic_extraction)） |
 | `consolidation_max_candidates` | `4` | 单轮巩固最多候选记忆数 |
 | `maintenance` | 见模板 | 衰减间隔、检索触发维护、深度维护（重复合并/弱记忆剪枝/簇重组）等调度参数 |
 | `embedding.enabled` | `false` | 是否启用本地向量检索；未启用时 `memory.retrieve` 退化为关键词检索 |
 | `embedding.backend` | `local_onnx` | 仅支持本地 ONNX（`BAAI/bge-small-zh-v1.5`，模型文件放 `models/embedding/`，向量存 SQLite） |
 
-记忆完全本地存储（记忆图 `graph.json` 与 SQLite 向量库位于应用数据目录），不依赖外部服务。
+记忆文件保存在本地，存储本身不依赖外部服务；自动提炼会调用配置的文本 LLM。如果使用远程 API，本轮用户输入与最终回复会发送到该服务，并非全程离线。存储位置由 `data_dir` 决定：
+
+- `data_dir` 为空（默认）：使用 Qt 的 `QStandardPaths::AppDataLocation`（Windows 下为 `%APPDATA%` 内按应用名生成的目录），不会写入可执行文件目录或工作目录
+- `data_dir` 非空：使用该目录；相对路径按进程当前工作目录解析
+- 实际文件：记忆图 `<data_dir>/memory/graph.json`（人类可读 JSON，原子写入）、向量库 `<data_dir>/memory/vectors.sqlite3`；`embedding.vector_db` 为相对路径时相对 `memory/` 目录解析
+
+### 5.1 开启长期记忆自动提炼（automatic_extraction）
+
+仓库基线 `memory_config.json` 与 `memory_config.example.json` 中 `automatic_extraction` 默认为 `false`：默认只处理“记住/忘记”类显式命令，不会从普通对话中提炼记忆。开启只需改这一个字段。
+
+最小修改（不覆盖其他设置）——在 `memory_config.json` 根对象中把该字段改为 `true`（下方仅为这两个键的示意，其余键保持原样，不要整文件替换）：
+
+```json
+{
+  "enabled": true,
+  "automatic_extraction": true
+}
+```
+
+最小完整有效配置示例：
+
+```json
+{
+  "enabled": true,
+  "data_dir": "",
+  "queue_capacity": 64,
+  "max_results": 6,
+  "prompt_budget_chars": 1200,
+  "default_scope": "pet",
+  "automatic_extraction": true,
+  "consolidation_max_candidates": 4
+}
+```
+
+未写出的键（`maintenance`、`embedding` 等）使用内置默认值；`consolidation_max_candidates` 取值范围为 1–8。
+
+生效前提（全部满足才会发生提炼）：
+
+| 条件 | 说明 |
+|---|---|
+| `automatic_extraction = true` | 自动提炼总开关 |
+| `enabled = true` 且配置被找到 | 记忆服务未启动时所有记忆功能空转 |
+| 文本 LLM 已配置 | 提炼本身是一次 `llm.chat` 调用；`llm_config.json` 缺失或未加载时不会发起 |
+| DAG 包含 `memory.store` 节点 | 提炼请求在 `memory.store` 执行后追加（默认 DAG 已包含） |
+| 触发类型为 `user` | 视觉主动发话（`vision`）轮次不提炼 |
+| 本轮有最终输出 | `semantic.text.final` 为空（如静默结束）时跳过 |
+
+单轮流程（全自动，无需任何额外点击）：
+
+1. `memory.store` 节点先处理显式命令（“记住/忘记”等由规则解析，直接入队写入，不经 LLM）
+2. 随后运行时把“用户输入 + 最终输出”提交给巩固器，向文本 LLM 发一次提炼请求（temperature 固定 0、最多 600 token，系统提示词要求只输出一个严格 JSON 对象）
+3. 响应整体校验：必须仅含 `candidates` 数组；每个候选必须带 `content` / `type` / `scope` / `tags` / `confidence` / `relation` / `related_memory_id` 七个字段，`type`（fact/preference/correction/negative）、`scope`（pet/global）、`relation`（none/supersedes/conflicts）取值受限，`confidence` 在 0.0–1.0，标签最多 8 个且互不重复，`relation` 非 `none` 时目标必须是本轮注入过的记忆 ID；任何一项不符（含候选之间内容重复），本轮候选整批丢弃
+4. 校验通过的候选进入记忆任务队列（容量 `queue_capacity`，默认 64，满则拒绝并记日志）
+5. 工作线程再次执行隐私与长度校验，并按 scope/pet/type 与现有活跃记忆去重：内容词元相似度 ≥ 0.80 时不新增，而是强化已有条目（强度 +1、置信度与信任分取较高值、合并标签）；`supersedes` 关系会软删除旧条目
+6. 通过后原子写盘 `graph.json`（启用向量检索时同步写向量库）；退出程序时队列排空、当前任务写完才停止
+
+与显式“记住”的区别：显式命令不消耗 LLM 调用、说什么写什么（疑问句不触发）；自动提炼每轮多一次 LLM 调用，只有模型判定存在持久的事实/偏好/更正/负面信息时才产生候选，临时性对话内容不写入。
+
+隐私：提炼的输入、输出与候选内容都经过同一套内容校验（凭据/私钥/JWT/环境变量赋值/身份证号/银行卡号等模式与长度上限），命中即丢弃并记录 `Memory ... privacy filter` 日志；系统提示词同时禁止模型提取凭据、密钥、证件与临时对话细节。
+
+与 embedding 的关系：`embedding.enabled` 只决定 `memory.retrieve` 使用本地向量检索还是退化为关键词检索，与自动提炼相互独立；发行包 `-IncludeEmbeddingModel` 只默认启用向量检索，不会改变 `automatic_extraction`。
+
+生效时机与配置副本：
+
+- `memory_config.json` 只在启动时加载一次，没有热加载（与 DAG 不同），修改后需重启程序
+- 配置查找顺序见[测试](#测试)一节：可执行文件目录 → 当前工作目录 → 可执行文件目录的上级 → 上两级，先找到的生效。以 `build/Release/VPet.exe` 为例，`build/Release/` 下的旧副本会优先于项目根目录的同名文件；改根目录配置不生效时先排查 exe 旁副本
+
+检索时机：`memory.retrieve` 为异步非阻塞，每轮只取上一轮已就绪的检索结果，且需通过话题相关性检查才注入提示词。因此新写入的记忆最早在下一轮对话可见（无论是否启用向量检索）。
+
+验证与排查：
+
+- 右键桌宠 → **长期记忆** 打开管理对话框：列表可直接确认新条目（带类型标注，冲突条目带 `[冲突]` 标记）；对话框打开期间，以 `Memory` 开头的运行消息（配置加载、提炼丢弃、隐私过滤、队列拒绝、维护警告等）会同步显示在对话框状态栏
+- 全部运行日志经 Qt `qDebug` 输出（从控制台启动程序或使用调试器时可见），关键消息包括 `Memory config loaded: <路径>`、`Memory service started.`、`Memory consolidation response discarded: <原因>`、`Memory store rejected by privacy filter: <原因>`
+- 也可直接查看 `<data_dir>/memory/graph.json`：自动提炼的条目 ID 形如 `mem_consolidated_*`，显式命令写入的为 `mem_*`
+
+常见失败排查：
+
+| 现象 | 排查 |
+|---|---|
+| 完全没有自动提炼 | `automatic_extraction` 是否为 `true`；`llm_config.json` 是否已配置；配置是否被 exe 旁旧副本抢占（见上文查找顺序）；该轮是否为视觉触发或无最终输出 |
+| 日志出现 `Memory consolidation response discarded: invalid_json`（或 `invalid_*`） | 模型未按要求输出严格 JSON，该轮候选整体丢弃；可换用指令遵循能力更好的模型 |
+| 日志出现 `Memory ... privacy filter: <类别>` | 输入/输出或候选内容命中隐私规则，属预期丢弃 |
+| 日志出现 `Memory task queue is full` | 记忆任务堆积；调大 `queue_capacity` 或降低对话频率 |
+| 提炼成功但下一轮未注入 | DAG 是否包含 `memory.retrieve`；新记忆最早下一轮生效，且延迟结果需通过话题相关性检查 |
 
 ### 6. 提示词修改指南
 
@@ -489,7 +572,7 @@ copy memory_config.example.json memory_config.json
 
 ### 7. 长期记忆
 
-1. 记忆随对话自动沉淀：每轮输出经 `memory.store` 异步写入，`memory.retrieve` 在下一轮注入相关记忆（LLM 不等待，结果延迟一轮可用）
+1. 记忆随对话沉淀：显式“记住/忘记”命令经 `memory.store` 异步写入；开启 `automatic_extraction` 后每个用户触发轮次还会自动提炼（默认关闭，完整流程与排查见[开启长期记忆自动提炼](#51-开启长期记忆自动提炼automatic_extraction)）。`memory.retrieve` 在下一轮注入相关记忆（异步非阻塞，结果延迟一轮可用）
 2. 也可直接用对话命令管理记忆：
 
 | 命令示例 | 效果 |
@@ -501,7 +584,7 @@ copy memory_config.example.json memory_config.json
 | “忘记…” / “删除记忆…” | 按关键词删除记忆 |
 
 3. 右键桌宠 → **长期记忆**：打开管理对话框，可浏览/编辑/删除记忆、导入/导出记忆图，并可对“这次记忆有帮助/无帮助”反馈以调整记忆权重
-4. 记忆数据位置：应用数据目录（记忆图 `graph.json`、SQLite 向量库），随应用退出 flush 落盘
+4. 记忆数据位置：`<data_dir>/memory/`（记忆图 `graph.json`、SQLite 向量库 `vectors.sqlite3`；`data_dir` 默认为系统应用数据目录，相对路径按进程工作目录解析）。每个记忆任务完成时原子落盘，退出程序时排空队列后停止
 
 ### 8. 常见调整（常用入口速查）
 
@@ -514,12 +597,13 @@ copy memory_config.example.json memory_config.json
 | 联网检索强度 | 同一文件 `web_research` 节点（轮数/query 数/预算/引擎） |
 | 记忆检索量/注入预算 | `memory_config.json`（`max_results` / `prompt_budget_chars`） |
 | 本地向量检索开关 | `memory_config.json` → `embedding.enabled`（模型用 `scripts/download_bge_model.ps1` 下载到 `models/embedding/`） |
+| 记忆自动提炼开关 | `memory_config.json` → `automatic_extraction`（详见[开启长期记忆自动提炼](#51-开启长期记忆自动提炼automatic_extraction)） |
 | 文本/视觉模型与 API Key | `llm_config.json` / `vision_llm_config.json` |
 | TTS 音色 / 语速 / 语种 | `tts_config.json`（`voice` / `speed` / `lang`） |
 | 播报音量 / 桌宠大小 | 右键菜单 **音量** / **宠物大小** 滑条（自动持久化到 `pet_config.json`） |
 | 语音输入 ASR 模型 | `tools/asr/download_sensevoice.py`（下载到 `models/sensevoice/`） |
 
-所有 JSON 修改重启程序生效。另见[提示词修改指南](#6-提示词修改指南)。
+所有 JSON 修改需重启程序生效，唯一例外是 DAG 配置：通过 DAG 编辑器保存会热重载，外部编辑 `agent_dag_structure.json` 也会触发自动重载（见下）。另见[提示词修改指南](#6-提示词修改指南)。
 
 ### 9. DAG 可视化编辑器
 
@@ -563,6 +647,7 @@ copy memory_config.example.json memory_config.json
 
 - 语音链路为轻量版：TTS 使用 Kokoro（音色固定、不可克隆用户音色），ASR 使用 SenseVoiceSmall（中英日韩粤混合）；与全量版 GPT-SoVITS 的替换细节见 [BUILD_PLAN.md](BUILD_PLAN.md)
 - 长期记忆的向量检索默认关闭（`embedding.enabled=false`），模型用 `scripts/download_bge_model.ps1` 下载（约 94 MB ONNX）后开启；未配置时检索退化为关键词匹配
+- 长期记忆自动提炼（`automatic_extraction`）默认关闭；开启后每个用户触发轮次追加一次文本 LLM 调用，模型须按提示词输出严格 JSON，否则该轮候选整体丢弃（见[开启长期记忆自动提炼](#51-开启长期记忆自动提炼automatic_extraction)）
 - 主动策略目前提供固定冷却、摘要指纹去重与感知级差分门控，尚未接入用户忙碌、语音播放和专注模式
 - 视觉派发的差分阈值（3%、灰度差 24）与 60 秒派发预算为固定值，暂无可视化设置界面
 - 会话历史暂未做窗口裁剪或摘要压缩，随使用线性增长
