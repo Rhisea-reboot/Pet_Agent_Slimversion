@@ -9,6 +9,7 @@
 #include <QDir>
 #include <QFileInfo>
 #include <QMessageBox>
+#include <QPixmapCache>
 #include <QStringList>
 #include <QTimer>
 
@@ -85,6 +86,11 @@ static QString GetAnimationBasePath()
 int main(int argc, char *argv[])
 {
     QApplication application(argc, argv);
+
+    // 提升帧缓存上限（默认 10 MB，单位 KB）：换帧路径依赖 QPixmapCache 缓存
+    // 缩放后的帧，64 MB 可减少 SmoothTransformation 的重复缩放开销。
+    // 必须在任何 pixmap 使用前设置。
+    QPixmapCache::setCacheLimit(64 * 1024);
 
     // 创建启动画面
     vpet::SplashWindow splashWindow;
