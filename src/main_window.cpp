@@ -480,25 +480,33 @@ void MainWindow::OnFrameChanged(const QString &framePath)
     }
 
     const bool isFirstFrame = !m_currentImageSize.isValid();
+    const bool isFrameSizeChanged = (displayPixmap.size() != m_currentImageSize);
 
     m_lastFramePath = framePath;
     m_currentImageSize = displayPixmap.size();
     m_imageLabel->setPixmap(displayPixmap);
-    m_imageLabel->resize(m_currentImageSize);
 
-    if (m_controller != nullptr)
+    // 动画帧间尺寸通常不变：仅尺寸变化（含首帧）时重做几何操作，避免每帧
+    // 重复 resize / SetFrameSize / 命中区域与指示灯重定位；换帧仍需 update 重绘。
+    if (isFrameSizeChanged)
     {
-        m_controller->SetFrameSize(m_currentImageSize);
+        m_imageLabel->resize(m_currentImageSize);
+
+        if (m_controller != nullptr)
+        {
+            m_controller->SetFrameSize(m_currentImageSize);
+        }
+
+        UpdateHitRegions(m_currentImageSize);
+
+        if (m_perceptionIndicatorLabel != nullptr)
+        {
+            m_perceptionIndicatorLabel->move(m_currentImageSize.width() - 14, 2);
+        }
+
+        resize(m_currentImageSize);
     }
 
-    UpdateHitRegions(m_currentImageSize);
-
-    if (m_perceptionIndicatorLabel != nullptr)
-    {
-        m_perceptionIndicatorLabel->move(m_currentImageSize.width() - 14, 2);
-    }
-
-    resize(m_currentImageSize);
     update();
 
     if (isFirstFrame)
