@@ -3,10 +3,13 @@
 
 #include <QCoreApplication>
 #include <QFileInfo>
+#include <QSqlDatabase>
+#include <QSqlQuery>
 #include <QTemporaryDir>
 #include <QtTest>
 
 #include <cmath>
+#include <limits>
 
 namespace
 {
@@ -98,6 +101,10 @@ private slots:
     void ClearForModelIsScoped();
     void OpenRejectsEmptyPath();
     void UpsertRejectsDimensionMismatch();
+    void QueryTopKTieBreaksByIdAscending();
+    void QueryTopKNonPositiveReturnsAll();
+    void QueryTopKLargeKReturnsAll();
+    void QueryTopKCorruptAndNonFiniteRowsIgnored();
 };
 
 void VectorStoreTest::OpenCreatesDatabase()
@@ -258,6 +265,173 @@ void VectorStoreTest::UpsertRejectsDimensionMismatch()
 
     QVERIFY(!store.Upsert(QStringLiteral("mem_1"), QStringLiteral("test-model"), 4,
                           MakeUnitVector(3, 0.9f), errorMessage));
+
+    store.Close();
+}
+
+void VectorStoreTest::QueryTopKTieBreaksByIdAscending()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+
+    vpet::VectorStore store;
+    QString errorMessage;
+    QVERIFY(store.Open(directory.path() + QStringLiteral("/vectors.sqlite3"), errorMessage));
+
+    const QVector<float> vec = MakeUnitVector(4, 0.8f);
+    QVERIFY(store.Upsert(QStringLiteral("id_c"), QStringLiteral("model-tie"), 4, vec, errorMessage));
+    QVERIFY(store.Upsert(QStringLiteral("id_a"), QStringLiteral("model-tie"), 4, vec, errorMessage));
+    QVERIFY(store.Upsert(QStringLiteral("id_b"), QStringLiteral("model-tie"), 4, vec, errorMessage));
+
+    QVector<vpet::VectorStore::_tagVectorHit> hits;
+    QVERIFY(store.QueryTopK(QStringLiteral("model-tie"), vec, 2, hits, errorMessage));
+    QCOMPARE(hits.size(), 2);
+    QCOMPARE(hits.at(0).entryId, QStringLiteral("id_a"));
+    QCOMPARE(hits.at(1).entryId, QStringLiteral("id_b"));
+
+    store.Close();
+}
+
+void VectorStoreTest::QueryTopKNonPositiveReturnsAll()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+
+    vpet::VectorStore store;
+    QString errorMessage;
+    QVERIFY(store.Open(directory.path() + QStringLiteral("/vectors.sqlite3"), errorMessage));
+
+    const QVector<float> query = MakeUnitVector(4, 1.0f);
+    QVERIFY(store.Upsert(QStringLiteral("1"), QStringLiteral("model-all"), 4, MakeUnitVector(4, 0.9f), errorMessage));
+    QVERIFY(store.Upsert(QStringLiteral("2"), QStringLiteral("model-all"), 4, MakeUnitVector(4, 0.5f), errorMessage));
+    QVERIFY(store.Upsert(QStringLiteral("3"), QStringLiteral("model-all"), 4, MakeUnitVector(4, 0.7f), errorMessage));
+
+    QVector<vpet::VectorStore::_tagVectorHit> hits0;
+    QVERIFY(store.QueryTopK(QStringLiteral("model-all"), query, 0, hits0, errorMessage));
+    QCOMPARE(hits0.size(), 3);
+    QCOMPARE(hits0.at(0).entryId, QStringLiteral("1"));
+    QCOMPARE(hits0.at(1).entryId, QStringLiteral("3"));
+    QCOMPARE(hits0.at(2).entryId, QStringLiteral("2"));
+
+    QVector<vpet::VectorStore::_tagVectorHit> hitsNegative;
+    QVERIFY(store.QueryTopK(QStringLiteral("model-all"), query, -1, hitsNegative, errorMessage));
+    QCOMPARE(hitsNegative.size(), 3);
+    QCOMPARE(hitsNegative.at(0).entryId, QStringLiteral("1"));
+    QCOMPARE(hitsNegative.at(1).entryId, QStringLiteral("3"));
+    QCOMPARE(hitsNegative.at(2).entryId, QStringLiteral("2"));
+
+    store.Close();
+}
+
+void VectorStoreTest::QueryTopKLargeKReturnsAll()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+
+    vpet::VectorStore store;
+    QString errorMessage;
+    QVERIFY(store.Open(directory.path() + QStringLiteral("/vectors.sqlite3"), errorMessage));
+
+    const QVector<float> query = MakeUnitVector(4, 1.0f);
+    QVERIFY(store.Upsert(QStringLiteral("1"), QStringLiteral("model-largek"), 4, MakeUnitVector(4, 0.2f), errorMessage));
+    QVERIFY(store.Upsert(QStringLiteral("2"), QStringLiteral("model-largek"), 4, MakeUnitVector(4, 0.8f), errorMessage));
+
+    QVector<vpet::VectorStore::_tagVectorHit> hits;
+    QVERIFY(store.QueryTopK(QStringLiteral("model-largek"), query, 100, hits, errorMessage));
+    QCOMPARE(hits.size(), 2);
+    QCOMPARE(hits.at(0).entryId, QStringLiteral("2"));
+    QCOMPARE(hits.at(1).entryId, QStringLiteral("1"));
+
+    store.Close();
+}
+
+void VectorStoreTest::QueryTopKCorruptAndNonFiniteRowsIgnored()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+
+    const QString dbPath = directory.path() + QStringLiteral("/vectors.sqlite3");
+    vpet::VectorStore store;
+    QString errorMessage;
+    QVERIFY(store.Open(dbPath, errorMessage));
+
+    QVERIFY(store.Upsert(QStringLiteral("valid_1"), QStringLiteral("model-corrupt"), 4,
+                         MakeUnitVector(4, 0.9f), errorMessage));
+    QVERIFY(store.Upsert(QStringLiteral("valid_2"), QStringLiteral("model-corrupt"), 4,
+                         MakeUnitVector(4, 0.8f), errorMessage));
+
+    store.Close();
+
+    // 注入损坏与非有限向量 blob
+    {
+        const QString connectionName = QStringLiteral("direct_sqlite_test");
+        {
+            QSqlDatabase db = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"), connectionName);
+            db.setDatabaseName(dbPath);
+            QVERIFY(db.open());
+
+            {
+                QSqlQuery q(db);
+                q.prepare(QStringLiteral(
+                    "INSERT INTO vectors (entry_id, model_id, dimension, embedding, updated_at) "
+                    "VALUES (?, ?, ?, ?, ?)"));
+                q.addBindValue(QStringLiteral("corrupt_bytes"));
+                q.addBindValue(QStringLiteral("model-corrupt"));
+                q.addBindValue(4);
+                const char badBytes[] = { 1, 2, 3 };
+                q.addBindValue(QByteArray(badBytes, sizeof(badBytes)));
+                q.addBindValue(1000);
+                QVERIFY(q.exec());
+            }
+
+            {
+                float nanVec[4] = { 0.5f, std::numeric_limits<float>::quiet_NaN(), 0.0f, 0.0f };
+                QByteArray nanBlob(reinterpret_cast<const char *>(nanVec), sizeof(nanVec));
+                QSqlQuery q(db);
+                q.prepare(QStringLiteral(
+                    "INSERT INTO vectors (entry_id, model_id, dimension, embedding, updated_at) "
+                    "VALUES (?, ?, ?, ?, ?)"));
+                q.addBindValue(QStringLiteral("nan_entry"));
+                q.addBindValue(QStringLiteral("model-corrupt"));
+                q.addBindValue(4);
+                q.addBindValue(nanBlob);
+                q.addBindValue(1001);
+                QVERIFY(q.exec());
+            }
+
+            {
+                float infVec[4] = { 0.5f, std::numeric_limits<float>::infinity(), 0.0f, 0.0f };
+                QByteArray infBlob(reinterpret_cast<const char *>(infVec), sizeof(infVec));
+                QSqlQuery q(db);
+                q.prepare(QStringLiteral(
+                    "INSERT INTO vectors (entry_id, model_id, dimension, embedding, updated_at) "
+                    "VALUES (?, ?, ?, ?, ?)"));
+                q.addBindValue(QStringLiteral("inf_entry"));
+                q.addBindValue(QStringLiteral("model-corrupt"));
+                q.addBindValue(4);
+                q.addBindValue(infBlob);
+                q.addBindValue(1002);
+                QVERIFY(q.exec());
+            }
+
+            db.close();
+        }
+        QSqlDatabase::removeDatabase(connectionName);
+    }
+
+    QVERIFY(store.Open(dbPath, errorMessage));
+    QVector<vpet::VectorStore::_tagVectorHit> hits;
+    const QVector<float> query = MakeUnitVector(4, 1.0f);
+    QVERIFY(store.QueryTopK(QStringLiteral("model-corrupt"), query, 10, hits, errorMessage));
+    QCOMPARE(hits.size(), 2);
+    QCOMPARE(hits.at(0).entryId, QStringLiteral("valid_1"));
+    QCOMPARE(hits.at(1).entryId, QStringLiteral("valid_2"));
+
+    // 覆盖 partial_sort 路径 (K = 1)
+    QVector<vpet::VectorStore::_tagVectorHit> top1Hits;
+    QVERIFY(store.QueryTopK(QStringLiteral("model-corrupt"), query, 1, top1Hits, errorMessage));
+    QCOMPARE(top1Hits.size(), 1);
+    QCOMPARE(top1Hits.at(0).entryId, QStringLiteral("valid_1"));
 
     store.Close();
 }

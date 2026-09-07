@@ -40,14 +40,20 @@ bool AgentContext::GetValue(const QString &key, QVariant &value) const
 {
     const QString normalizedKey = key.trimmed();
 
-    if (normalizedKey.isEmpty() || !m_values.contains(normalizedKey))
+    if (normalizedKey.isEmpty())
     {
         value.clear();
         return false;
     }
 
-    value = m_values.value(normalizedKey);
+    const auto it = m_values.constFind(normalizedKey);
+    if (it == m_values.constEnd())
+    {
+        value.clear();
+        return false;
+    }
 
+    value = it.value();
     return true;
 }
 
@@ -90,16 +96,19 @@ AgentContext AgentContext::Snapshot() const
 
 bool AgentContext::Overlay(const AgentContext &overlay)
 {
-    const QStringList keys = overlay.GetKeys();
-
-    for (const QString &key : keys)
+    if (this == &overlay)
     {
-        QVariant value;
+        return true;
+    }
 
-        if (!overlay.GetValue(key, value) || !SetValue(key, value))
+    for (auto it = overlay.m_values.constBegin(); it != overlay.m_values.constEnd(); ++it)
+    {
+        if (!it.value().isValid())
         {
             return false;
         }
+
+        m_values.insert(it.key(), it.value());
     }
 
     return true;
@@ -109,22 +118,56 @@ bool AgentContext::BuildDelta(const AgentContext &base,
                               AgentContext &delta,
                               QSet<QString> &removedKeys) const
 {
+    // 如果存在别名（delta 与 this 或 base 是同一个对象），保留原先行为与语义（先 Clear 再按旧逻辑通过快照 keys 提取）
+    if ((&delta == this) || (&delta == &base))
+    {
+        delta.Clear();
+        removedKeys.clear();
+
+        const QStringList currentKeys = GetKeys();
+
+        for (const QString &key : currentKeys)
+        {
+            QVariant currentValue;
+            QVariant baseValue;
+
+            if (!GetValue(key, currentValue))
+            {
+                return false;
+            }
+
+            if (!base.GetValue(key, baseValue) || (currentValue != baseValue))
+            {
+                if (!delta.SetValue(key, currentValue))
+                {
+                    return false;
+                }
+            }
+        }
+
+        const QStringList baseKeys = base.GetKeys();
+
+        for (const QString &key : baseKeys)
+        {
+            if (!Contains(key))
+            {
+                removedKeys.insert(key);
+            }
+        }
+
+        return true;
+    }
+
     delta.Clear();
     removedKeys.clear();
 
-    const QStringList currentKeys = GetKeys();
-
-    for (const QString &key : currentKeys)
+    for (auto it = m_values.constBegin(); it != m_values.constEnd(); ++it)
     {
-        QVariant currentValue;
-        QVariant baseValue;
+        const QString &key = it.key();
+        const QVariant &currentValue = it.value();
 
-        if (!GetValue(key, currentValue))
-        {
-            return false;
-        }
-
-        if (!base.GetValue(key, baseValue) || (currentValue != baseValue))
+        const auto baseIt = base.m_values.constFind(key);
+        if ((baseIt == base.m_values.constEnd()) || (currentValue != baseIt.value()))
         {
             if (!delta.SetValue(key, currentValue))
             {
@@ -133,11 +176,10 @@ bool AgentContext::BuildDelta(const AgentContext &base,
         }
     }
 
-    const QStringList baseKeys = base.GetKeys();
-
-    for (const QString &key : baseKeys)
+    for (auto it = base.m_values.constBegin(); it != base.m_values.constEnd(); ++it)
     {
-        if (!Contains(key))
+        const QString &key = it.key();
+        if (!m_values.contains(key))
         {
             removedKeys.insert(key);
         }

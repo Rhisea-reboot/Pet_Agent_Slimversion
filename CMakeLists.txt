@@ -239,7 +239,9 @@ if(BUILD_TESTING)
     add_executable(agent_dag_graph_tests
         tests/agent_dag_graph_test.cpp
         src/agent/agent_dag_graph.cpp
+        src/agent/agent_context.cpp
         include/vpet/agent/agent_dag_graph.h
+        include/vpet/agent/agent_context.h
     )
 
     target_include_directories(agent_dag_graph_tests

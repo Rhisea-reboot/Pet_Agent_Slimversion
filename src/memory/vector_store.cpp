@@ -351,6 +351,7 @@ bool VectorStore::QueryTopK(const QString &modelId,
         return false;
     }
 
+    QVector<float> storedEmbedding(queryDimension, 0.0f);
     while (query.next())
     {
         const int storedDimension = query.value(1).toInt();
@@ -361,7 +362,6 @@ bool VectorStore::QueryTopK(const QString &modelId,
             continue;
         }
 
-        QVector<float> storedEmbedding(queryDimension, 0.0f);
         std::memcpy(storedEmbedding.data(),
                     blob.constData(),
                     static_cast<size_t>(expectedBytes));
@@ -384,8 +384,7 @@ bool VectorStore::QueryTopK(const QString &modelId,
         hits.append(hit);
     }
 
-    std::stable_sort(hits.begin(), hits.end(),
-                     [](const _tagVectorHit &lhs, const _tagVectorHit &rhs)
+    auto hitComparator = [](const _tagVectorHit &lhs, const _tagVectorHit &rhs)
     {
         if (lhs.score != rhs.score)
         {
@@ -393,11 +392,19 @@ bool VectorStore::QueryTopK(const QString &modelId,
         }
 
         return lhs.entryId < rhs.entryId;
-    });
+    };
 
     if ((maxResults > 0) && (hits.size() > maxResults))
     {
+        std::partial_sort(hits.begin(),
+                          hits.begin() + maxResults,
+                          hits.end(),
+                          hitComparator);
         hits.resize(maxResults);
+    }
+    else
+    {
+        std::stable_sort(hits.begin(), hits.end(), hitComparator);
     }
 
     return true;
